@@ -1,28 +1,43 @@
 # Gộp Video Bilibili
 
-Tool gộp 2 file video Bilibili tải bằng IDM (1 file chỉ có hình + 1 file chỉ có
-tiếng, do Bilibili tách hình/tiếng thành 2 luồng DASH) thành 1 video hoàn chỉnh
-có cả hình lẫn tiếng, để đưa vào iContent làm tiếp.
+Tool gộp video Bilibili thành 1 video hoàn chỉnh có cả hình lẫn tiếng, để đưa
+vào iContent làm tiếp. Có 2 chức năng:
 
-## Cách dùng (bản .exe)
+## 1. Tải video từ Bilibili
 
-1. Tải file `Gop-Video-Bilibili.exe` ở mục Releases (hoặc Actions -> Artifacts).
-2. Bấm đúp file `.exe`.
-3. Chọn file Video (hình) + file Audio (tiếng), hoặc bấm **"Chọn thư mục chứa
-   2 file"** để tool tự nhận diện (dùng ffprobe xem file nào thật sự có hình,
-   không đọc được thì đoán theo cỡ file).
-4. Chọn thư mục lưu mặc định (mặc định: `Desktop\Video-Da-Gop`, nhớ lựa chọn
-   lần sau).
-5. Bấm **GỘP VIDEO**. Tool tự tạo thư mục con tên như video trong thư mục lưu
-   và lưu video hoàn thiện vào đó, ví dụ:
-   `Desktop\Video-Da-Gop\Thanh Dong\Thanh Dong.mp4`.
+1. Dán link Bilibili (BV...) vào ô link, bấm **Kiểm tra link**.
+2. Chọn chất lượng (1080p / 720p / 480p...), bấm **TẢI XUỐNG + GỘP LUÔN**.
+3. Tool tải video + audio bằng yt-dlp rồi tự gộp thành 1 video hoàn chỉnh.
+
+## 2. Gộp 2 file đã có (tải bằng IDM)
+
+Bilibili tách hình/tiếng thành 2 luồng DASH nên IDM tải về 2 file riêng
+(1 file chỉ có hình + 1 file chỉ có tiếng). Chọn 2 file đó (hoặc bấm **Chọn
+thư mục chứa 2 file** để tool tự nhận diện), bấm **GỘP VIDEO**.
+
+## Thư mục lưu
+
+Video hoàn thiện lưu vào `<thư mục lưu>\<tên video>\<tên video>.mp4`
+(thư mục lưu mặc định: `Desktop\Video-Da-Gop`, nhớ lựa chọn lần sau).
+Ví dụ: `Desktop\Video-Da-Gop\Thanh Dong\Thanh Dong.mp4`.
 
 ## Yêu cầu
 
-- Cần `ffmpeg` trên máy. Tool tự tìm ffmpeg (cùng thư mục với `.exe`, PATH,
+- `ffmpeg` + `yt-dlp` trên máy. Tool tự tìm (cùng thư mục với `.exe`, PATH,
   `C:\ffmpeg`, `C:\iContent`...). Nếu không thấy, tool báo link tải:
-  https://www.gyan.dev/ffmpeg/builds/ — giải nén, copy `ffmpeg.exe` vào cùng
-  thư mục với tool là chạy.
+  - ffmpeg: https://www.gyan.dev/ffmpeg/builds/
+  - yt-dlp: https://github.com/yt-dlp/yt-dlp/releases (file `yt-dlp.exe`)
+- File `cookies.txt` của Bilibili (để tải 1080p). Không có cookies thì thường
+  chỉ tải được 480p. Tool tự nhận file ở
+  `Desktop\Cookiebili\cookies.txt` nếu có, hoặc bấm Chọn để chỉ đường dẫn.
+
+## Vì sao phần tải không dùng IDM
+
+Link stream video Bilibili bắt buộc phải có header Referer mới tải được
+(đã test thật: có Referer + User-Agent trình duyệt = 206, không Referer =
+403). Lệnh dòng lệnh của IDM không gửi được Referer nên dán link Bilibili
+vào IDM là tải lỗi 403. Vì vậy phần tải dùng yt-dlp — cùng engine iContent
+đang dùng để tải 1080p.
 
 ## Build
 
@@ -31,5 +46,5 @@ GitHub Actions tự build `.exe` trên Windows mỗi lần push lên `main`
 
 ## Bản console
 
-`Gop-Video-Bilibili.py` + `Gop-Video-Bilibili.bat` (bản cũ, không giao diện)
-đang lưu ở máy Gà Con, không nằm trong repo này.
+`Gop-Video-Bilibili.py` + `Gop-Video-Bilibili.bat` (bản cũ, không giao diện,
+chỉ gộp file) đang lưu ở máy Gà Con, không nằm trong repo này.

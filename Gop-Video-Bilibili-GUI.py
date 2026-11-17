@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 r"""
 GỘP VIDEO BILIBILI - bản giao diện (build thành file .exe trên Windows)
-2 chức năng:
-1. Tải video từ Bilibili: dán link, chọn chất lượng, tải về (yt-dlp) rồi tự
-   gộp thành 1 video hoàn chỉnh.
-2. Gộp 2 file đã có (tải bằng IDM): chọn file hình + file tiếng, gộp lại.
+3 chức năng:
+1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
+   tự gộp thành 1 video hoàn chỉnh.
+2. Tải video từ Bilibili bằng IDM: dán link, chọn chất lượng, tool đẩy link
+   hình + link tiếng sang IDM qua COM API (kèm Referer + cookie) để IDM tải
+   nhanh nhiều luồng, xong thì gộp ở mục 3.
+3. Gộp 2 file đã có (tải bằng IDM): chọn file hình + file tiếng, gộp lại.
 Video hoàn thiện lưu vào <thư mục lưu>\<tên video>\<tên video>.mp4
 (thư mục lưu mặc định: Desktop\Video-Da-Gop, nhớ lựa chọn lần sau).
 Cần ffmpeg + yt-dlp: tool tự tìm trên máy (cùng thư mục với .exe, PATH,
@@ -26,6 +29,11 @@ FFMPEG_LINK = "https://www.gyan.dev/ffmpeg/builds/"
 YTDLP_LINK = "https://github.com/yt-dlp/yt-dlp/releases"
 MEDIA_EXTS = (".mp4", ".m4a", ".webm", ".mkv")
 COOKIES_MAC_DINH = r"C:\Users\Administrator\Desktop\Cookiebili\cookies.txt"
+UA_TRINH_DUYET = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36")
+# GUID của thư viện kiểu IDM (IDManTypeInfo.tlb) để gọi COM API.
+IDM_TLB_GUID = "{ECF21EAB-3AA8-4355-82BE-F777990001DD}"
 # Mã chất lượng (qn) của Bilibili -> nhãn hiển thị. Dùng mã qn thay vì chiều
 # cao pixel vì video dọc (vd. 1080x1920) có height=1920 nhưng vẫn là "1080p".
 QN_LABEL = {6: "240p", 16: "360p", 32: "480p", 64: "720p", 74: "720p60",
@@ -293,6 +301,126 @@ def tai_va_gop(url, option, cookies, outdir, log, tien_trinh):
     return out_path, folder
 
 
+def doc_cookies_txt(path):
+    """Đọc file cookies.txt (định dạng Netscape) -> chuỗi 'name=value; ...'
+    dùng cho IDM. Trả về '' nếu không đọc được / không có cookie."""
+    cookies = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 7:
+                    name, value = parts[5].strip(), parts[6].strip()
+                    if name and value:
+                        cookies.append("%s=%s" % (name, value))
+    except Exception:
+        return ""
+    return "; ".join(cookies)
+
+
+def lay_link_stream(url, format_id, cookies):
+    """Lấy link trực tiếp (.m4s) của 1 format bằng yt-dlp --get-url.
+    Chỉ lấy link, không tải. Trả về URL (chuỗi)."""
+    ytdlp = tim_ytdlp()
+    if not ytdlp:
+        raise RuntimeError("Chưa tìm thấy yt-dlp trên máy.")
+    cmd = [ytdlp, "--no-playlist", "-f", format_id, "--get-url"]
+    if cookies and os.path.isfile(cookies):
+        cmd += ["--cookies", cookies]
+    cmd.append(url)
+    r = subprocess.run(cmd, capture_output=True, text=True,
+                       errors="replace", timeout=120)
+    if r.returncode != 0:
+        raise RuntimeError("Không lấy được link tải. Kiểm tra lại link / mạng.")
+    links = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    if not links:
+        raise RuntimeError("Không lấy được link tải.")
+    return links[0]
+
+
+def gui_sang_idm(link, referer, cookie_str, local_path, local_filename,
+                 user_agent=None):
+    """Đẩy 1 link sang IDM bằng COM API (SendLinkToIDM2) — đúng cơ chế
+    extension trình duyệt dùng: gửi kèm Referer + cookie nên Bilibili
+    không chặn 403. Cần IDM đã cài trên máy (Windows).
+    Trả về True nếu gửi thành công."""
+    try:
+        import comtypes.client as cc
+        from comtypes import automation
+    except ImportError:
+        raise RuntimeError("Thiếu thư viện comtypes (cần để gọi IDM).")
+    try:
+        try:
+            cc.GetModule([IDM_TLB_GUID, 1, 0])
+        except Exception:
+            tlb = None
+            for base in (r"C:\Program Files (x86)\Internet Download Manager",
+                         r"C:\Program Files\Internet Download Manager"):
+                cand = os.path.join(base, "IDManTypeInfo.tlb")
+                if os.path.isfile(cand):
+                    tlb = cand
+                    break
+            if tlb:
+                cc.GetModule(tlb)
+            else:
+                raise
+        import comtypes.gen.IDManLib as idman
+    except Exception:
+        raise RuntimeError("Không tìm thấy IDM trên máy. Hãy cài IDM rồi thử lại.")
+    try:
+        idm = cc.CreateObject(idman.CIDMLinkTransmitter, None, None,
+                              idman.ICIDMLinkTransmitter2)
+    except Exception as e:
+        raise RuntimeError("Không kết nối được với IDM: %s" % e)
+    reserved1 = automation.VARIANT()
+    if user_agent:
+        reserved1.vt = automation.VT_BSTR
+        reserved1.value = user_agent
+    else:
+        reserved1.vt = automation.VT_EMPTY
+    reserved2 = automation.VARIANT()
+    reserved2.vt = automation.VT_EMPTY
+    local_path = os.path.realpath(local_path)
+    try:
+        # lFlags=1: không hiện hộp thoại xác nhận, tải ngay.
+        idm.SendLinkToIDM2(link, referer, cookie_str or "", "", "", "",
+                           local_path, local_filename, 1, reserved1, reserved2)
+    except Exception as e:
+        raise RuntimeError("IDM báo lỗi: %s" % e)
+    return True
+
+
+def tai_bang_idm(url, option, cookies, outdir, log):
+    """Lấy link hình + tiếng rồi đẩy cả 2 sang IDM tải nhanh nhiều luồng.
+    Trả về (thư mục chứa file, tên file hình, tên file tiếng).
+    IDM tải xong thì dùng mục Gộp để gộp lại."""
+    info = kiem_tra_link(url, cookies)
+    ten = sanitize_ten(info["title"])
+    folder = os.path.join(outdir, ten)
+    os.makedirs(folder, exist_ok=True)
+    cookie_str = (doc_cookies_txt(cookies)
+                  if cookies and os.path.isfile(cookies) else "")
+    referer = url.strip()
+    log("Đang lấy link %s (%s) để đẩy sang IDM..."
+        % (info["title"], option["label"]))
+    link_video = lay_link_stream(url, option["video_id"], cookies)
+    link_audio = (lay_link_stream(url, option["audio_id"], cookies)
+                  if option.get("audio_id") else None)
+    ten_video = ten + "_hinh.mp4"
+    ten_audio = ten + "_tieng.m4a"
+    gui_sang_idm(link_video, referer, cookie_str, folder, ten_video,
+                 UA_TRINH_DUYET)
+    log("Đã đẩy link hình sang IDM: " + ten_video)
+    if link_audio:
+        gui_sang_idm(link_audio, referer, cookie_str, folder, ten_audio,
+                     UA_TRINH_DUYET)
+        log("Đã đẩy link tiếng sang IDM: " + ten_audio)
+    return folder, ten_video, ten_audio if link_audio else None
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -338,19 +466,24 @@ class App(tk.Tk):
         self.cbo_chat_luong = ttk.Combobox(f1, textvariable=self.chat_luong_var,
                                            state="readonly", width=12)
         self.cbo_chat_luong.grid(row=2, column=1, sticky="w", **pad)
-        self.btn_tai = tk.Button(f1, text="TẢI XUỐNG + GỘP LUÔN",
+        self.btn_tai = tk.Button(f1, text="TẢI XUỐNG + GỘP LUÔN (yt-dlp)",
                                  bg="#1565c0", fg="white", font=("", 11, "bold"),
                                  command=self.bam_tai, state="disabled")
         self.btn_tai.grid(row=2, column=2, **pad)
 
+        self.btn_idm = tk.Button(f1, text="TẢI BẰNG IDM (nhanh, nhiều luồng)",
+                                 bg="#e65100", fg="white", font=("", 11, "bold"),
+                                 command=self.bam_idm, state="disabled")
+        self.btn_idm.grid(row=3, column=0, columnspan=3, sticky="ew", **pad)
+
         tk.Label(f1, text="File cookies.txt (để tải 1080p):").grid(
-            row=3, column=0, sticky="w", **pad)
+            row=4, column=0, sticky="w", **pad)
         tk.Entry(f1, textvariable=self.cookies_var).grid(
-            row=3, column=1, sticky="ew", **pad)
+            row=4, column=1, sticky="ew", **pad)
         tk.Button(f1, text="Chọn...",
-                  command=self.chon_cookies).grid(row=3, column=2, **pad)
+                  command=self.chon_cookies).grid(row=4, column=2, **pad)
         tk.Label(f1, text="Không có cookies thì thường chỉ tải được 480p.",
-                 fg="gray").grid(row=4, column=0, columnspan=3, sticky="w", **pad)
+                 fg="gray").grid(row=5, column=0, columnspan=3, sticky="w", **pad)
 
         # ---- Khung 2: Gộp 2 file đã có ----
         f2 = tk.LabelFrame(self, text=" 2. Gộp 2 file đã có (tải bằng IDM) ",
@@ -464,6 +597,7 @@ class App(tk.Tk):
                              dinh_dang_thoi_luong(info["duration"]),
                              ", ".join(o["label"] for o in options)))
         self.btn_tai.config(state="normal")
+        self.btn_idm.config(state="normal")
         self.ghi_log("Đã đọc link: %s" % info["title"])
 
     def _kiem_tra_loi(self, msg):
@@ -527,6 +661,56 @@ class App(tk.Tk):
         self.status_var.set("Tải thất bại.")
         self.ghi_log("TẢI THẤT BẠI: " + msg)
         messagebox.showerror("Tải thất bại", msg)
+
+    def bam_idm(self):
+        if not self.link_info:
+            messagebox.showerror("Chưa kiểm tra", "Bấm Kiểm tra link trước đã.")
+            return
+        url = self.link_var.get().strip()
+        chon = self.chat_luong_var.get().strip()
+        option = None
+        for o in getattr(self, "chat_luong_options", []):
+            if o["label"] == chon:
+                option = o
+                break
+        if option is None:
+            messagebox.showerror("Chưa chọn", "Chọn chất lượng tải về trước đã.")
+            return
+        outdir = self.outdir_var.get().strip()
+        if not outdir:
+            messagebox.showerror("Thiếu thư mục", "Chưa chọn thư mục lưu.")
+            return
+        cookies = self.cookies_var.get().strip()
+        self.luu_cau_hinh()
+        self.btn_idm.config(state="disabled")
+        self.status_var.set("Đang đẩy link sang IDM...")
+        threading.Thread(target=self._idm_worker,
+                         args=(url, option, cookies, outdir),
+                         daemon=True).start()
+
+    def _idm_worker(self, url, option, cookies, outdir):
+        try:
+            folder, ten_video, ten_audio = tai_bang_idm(
+                url, option, cookies, outdir, self.log_threadsafe)
+            self.after(0, self._idm_xong, folder, ten_video, ten_audio)
+        except Exception as e:
+            self.after(0, self._idm_loi, str(e))
+        finally:
+            self.after(0, lambda: self.btn_idm.config(state="normal"))
+
+    def _idm_xong(self, folder, ten_video, ten_audio):
+        self.status_var.set("Đã đẩy sang IDM.")
+        self.ghi_log("ĐÃ ĐẨY SANG IDM. IDM đang tải 2 file vào: " + folder)
+        messagebox.showinfo(
+            "Đã đẩy sang IDM",
+            "IDM đang tải 2 file:\n- %s\n- %s\n\nTải xong thì bấm GỘP VIDEO ở mục 2 "
+            "(bấm 'Chọn thư mục chứa 2 file' rồi chọn thư mục này) để gộp lại."
+            % (ten_video, ten_audio or "(chỉ có hình)"))
+
+    def _idm_loi(self, msg):
+        self.status_var.set("Đẩy sang IDM thất bại.")
+        self.ghi_log("ĐẨY SANG IDM THẤT BẠI: " + msg)
+        messagebox.showerror("Đẩy sang IDM thất bại", msg)
 
     # ---------- khung 2: gộp file ----------
     def chon_video(self):

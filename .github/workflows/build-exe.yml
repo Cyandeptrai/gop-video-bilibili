@@ -16,7 +16,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install PyInstaller
-        run: pip install pyinstaller
+        run: pip install pyinstaller comtypes
 
       - name: Build EXE
         run: pyinstaller --onefile --windowed --name "Gop-Video-Bilibili" Gop-Video-Bilibili-GUI.py

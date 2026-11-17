@@ -37,6 +37,26 @@ UA_TRINH_DUYET = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                   "Chrome/120.0.0.0 Safari/537.36")
 # GUID của thư viện kiểu IDM (IDManTypeInfo.tlb) để gọi COM API.
 IDM_TLB_GUID = "{ECF21EAB-3AA8-4355-82BE-F777990001DD}"
+
+
+def chay_ngam_kwargs():
+    """Tham số để chạy chương trình con trên Windows mà không hiện cửa sổ
+    đen (console). Trên hệ khác thì không cần."""
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
+def chuan_hoa_link_bilibili(url):
+    """Chuẩn hóa link Bilibili về dạng https://www.bilibili.com/video/BV...
+    (bỏ tiền tố ngôn ngữ /vi/, /en/... và các tham số theo dõi) để yt-dlp
+    nhận đúng extractor Bilibili. Link không phải Bilibili thì giữ nguyên."""
+    if not url or "bilibili.com" not in url:
+        return url
+    m = re.search(r"(BV[0-9A-Za-z]+)", url)
+    if m:
+        return "https://www.bilibili.com/video/" + m.group(1)
+    return url
 # Mã chất lượng (qn) của Bilibili -> nhãn hiển thị. Dùng mã qn thay vì chiều
 # cao pixel vì video dọc (vd. 1080x1920) có height=1920 nhưng vẫn là "1080p".
 QN_LABEL = {6: "240p", 16: "360p", 32: "480p", 64: "720p", 74: "720p60",
@@ -149,7 +169,8 @@ def file_co_video(ffprobe, path):
         r = subprocess.run(
             [ffprobe, "-v", "error", "-show_entries", "stream=codec_type",
              "-of", "csv=p=0", path],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, text=True, timeout=30,
+            **chay_ngam_kwargs())
         types = [t.strip() for t in r.stdout.splitlines() if t.strip()]
         return "video" in types
     except Exception:
@@ -222,6 +243,7 @@ def kiem_tra_link(url, cookies):
     {label, quality, video_id, audio_id} xếp từ cao xuống thấp.
     Ưu tiên bản avc1 (H.264) thay vì HEVC để tương thích tốt hơn.
     Cần yt-dlp."""
+    url = chuan_hoa_link_bilibili(url)
     ytdlp = tim_ytdlp()
     if not ytdlp:
         raise RuntimeError("Chưa tìm thấy yt-dlp trên máy.")
@@ -230,7 +252,7 @@ def kiem_tra_link(url, cookies):
         cmd += ["--cookies", cookies]
     cmd.append(url)
     r = subprocess.run(cmd, capture_output=True, text=True,
-                       errors="replace", timeout=120)
+                       errors="replace", timeout=120, **chay_ngam_kwargs())
     if r.returncode != 0:
         raise RuntimeError("Không đọc được link. Kiểm tra lại link / mạng.")
     info = json.loads(r.stdout)
@@ -267,6 +289,7 @@ def kiem_tra_link(url, cookies):
 def tai_va_gop(url, option, cookies, outdir, log, tien_trinh):
     """Tải video+audio theo lựa chọn chất lượng rồi gộp thành 1 mp4 trong
     <outdir>/<tên video>/<tên video>.mp4. Trả về (đường dẫn file, thư mục)."""
+    url = chuan_hoa_link_bilibili(url)
     ytdlp = tim_ytdlp()
     ffmpeg = tim_ffmpeg()
     if not ytdlp:
@@ -291,7 +314,8 @@ def tai_va_gop(url, option, cookies, outdir, log, tien_trinh):
         % (info["title"], dinh_dang_thoi_luong(info["duration"]),
            option["label"]))
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, errors="replace", bufsize=1)
+                            text=True, errors="replace", bufsize=1,
+                            **chay_ngam_kwargs())
     pct_re = re.compile(r"(\d+(?:\.\d+)?%)")
     for line in proc.stdout:
         if pct_re.search(line) and "download" in line.lower():
@@ -332,6 +356,7 @@ def doc_cookies_txt(path):
 def lay_link_stream(url, format_id, cookies):
     """Lấy link trực tiếp (.m4s) của 1 format bằng yt-dlp --get-url.
     Chỉ lấy link, không tải. Trả về URL (chuỗi)."""
+    url = chuan_hoa_link_bilibili(url)
     ytdlp = tim_ytdlp()
     if not ytdlp:
         raise RuntimeError("Chưa tìm thấy yt-dlp trên máy.")
@@ -340,7 +365,7 @@ def lay_link_stream(url, format_id, cookies):
         cmd += ["--cookies", cookies]
     cmd.append(url)
     r = subprocess.run(cmd, capture_output=True, text=True,
-                       errors="replace", timeout=120)
+                       errors="replace", timeout=120, **chay_ngam_kwargs())
     if r.returncode != 0:
         raise RuntimeError("Không lấy được link tải. Kiểm tra lại link / mạng.")
     links = [l.strip() for l in r.stdout.splitlines() if l.strip()]
@@ -406,6 +431,7 @@ def tai_bang_idm(url, option, cookies, outdir, log):
     Trả về (thư mục chứa file, tên file hình, tên file tiếng,
     tổng dung lượng ước tính để theo dõi %).
     IDM tải xong thì dùng mục Gộp để gộp lại."""
+    url = chuan_hoa_link_bilibili(url)
     info = kiem_tra_link(url, cookies)
     ten = sanitize_ten(info["title"])
     folder = os.path.join(outdir, ten)
@@ -882,7 +908,8 @@ class App(tk.Tk):
             out_path = os.path.join(folder, out_name)
             cmd = [ffmpeg, "-i", video, "-i", audio, "-c", "copy", out_path]
             r = subprocess.run(cmd, capture_output=True, text=True,
-                               errors="replace", timeout=3600)
+                               errors="replace", timeout=3600,
+                               **chay_ngam_kwargs())
             if r.returncode != 0:
                 err = (r.stderr or "").strip().splitlines()[-5:]
                 raise RuntimeError("ffmpeg báo lỗi:\n" + "\n".join(err))

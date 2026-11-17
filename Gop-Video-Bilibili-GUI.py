@@ -476,12 +476,10 @@ class App(tk.Tk):
                                            state="readonly", width=12)
         self.cbo_chat_luong.grid(row=2, column=1, sticky="w", **pad)
         self.btn_tai = tk.Button(f1, text="TẢI XUỐNG + GỘP LUÔN (yt-dlp)",
-                                 bg="#1565c0", fg="white", font=("", 11, "bold"),
                                  command=self.bam_tai, state="disabled")
         self.btn_tai.grid(row=2, column=2, **pad)
 
         self.btn_idm = tk.Button(f1, text="TẢI BẰNG IDM (nhanh, nhiều luồng)",
-                                 bg="#e65100", fg="white", font=("", 11, "bold"),
                                  command=self.bam_idm, state="disabled")
         self.btn_idm.grid(row=3, column=0, columnspan=3, sticky="ew", **pad)
 
@@ -524,15 +522,13 @@ class App(tk.Tk):
             row=2, column=0, columnspan=3, sticky="ew", **pad)
 
         self.btn_gop = tk.Button(f2, text="GỘP VIDEO", font=("", 12, "bold"),
-                                 bg="#2e7d32", fg="white", height=2,
-                                 command=self.bam_gop)
+                                 height=2, command=self.bam_gop)
         self.btn_gop.grid(row=3, column=0, columnspan=3, sticky="ew", **pad)
 
         self.thanh_qua = None
         self.btn_xem = tk.Button(f2, text="XEM THÀNH QUẢ",
-                                 font=("", 11, "bold"), bg="#6a1b9a",
-                                 fg="white", command=self.bam_xem,
-                                 state="disabled")
+                                 font=("", 11, "bold"),
+                                 command=self.bam_xem, state="disabled")
         self.btn_xem.grid(row=4, column=0, columnspan=3, sticky="ew", **pad)
 
         # ---- Thư mục lưu ----

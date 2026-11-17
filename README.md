@@ -9,7 +9,9 @@ vào iContent làm tiếp. Có 2 chức năng:
 2. Chọn chất lượng (1080p / 720p / 480p...).
 3. Bấm **TẢI XUỐNG + GỘP LUÔN** để tải bằng yt-dlp rồi tự gộp, hoặc bấm
    **TẢI BẰNG IDM (nhanh, nhiều luồng)** để đẩy link hình + link tiếng sang
-   IDM tải nhanh, xong thì gộp ở mục 3.
+   IDM tải nhanh. Tool hiện **% tải** ở thanh tiến độ (đo dung lượng file
+   đang lớn dần so với dung lượng dự kiến), tải xong **tự điền 2 file vào
+   mục Gộp**, chỉ việc bấm **GỘP VIDEO**.
 
 ### Vì sao phần tải IDM làm được (và lệnh IDM thường thì không)
 
@@ -25,7 +27,20 @@ cookie (đọc từ file cookies.txt) nên IDM tải được, nhanh nhiều lu�
 
 Bilibili tách hình/tiếng thành 2 luồng DASH nên IDM tải về 2 file riêng
 (1 file chỉ có hình + 1 file chỉ có tiếng). Chọn 2 file đó (hoặc bấm **Chọn
-thư mục chứa 2 file** để tool tự nhận diện), bấm **GỘP VIDEO**.
+thư mục chứa 2 file** để tool tự nhận diện), bấm **GỘP VIDEO**. Gộp xong
+thì bấm **XEM THÀNH QUẢ** để mở video vừa gộp ra xem.
+
+> Lưu ý: tải bằng IDM xong thì tool tự điền sẵn 2 file vào mục này, không
+> cần chọn tay.
+
+## Vì sao không bấm nút tải của Cốc Cốc tự động
+
+Nút tải video của Cốc Cốc là nút của **giao diện trình duyệt**, không phải
+nút trên trang web, nên tool không bấm được bằng cách điều khiển trang
+(CDP/Selenium chỉ chạm được nội dung trang). Bấm theo tọa độ màn hình thì
+dễ lệch, không ổn định. Vì vậy tool đẩy link **thẳng sang IDM** bằng COM
+API (cùng Referer + cookie mà Cốc Cốc gửi) nên tốc độ tải nhanh như nhau,
+không cần mở Cốc Cốc.
 
 ## Thư mục lưu
 

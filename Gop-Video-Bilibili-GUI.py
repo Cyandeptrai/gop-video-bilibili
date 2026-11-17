@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 r"""
 GỘP VIDEO BILIBILI - bản giao diện (build thành file .exe trên Windows)
-3 chức năng:
+Luồng chính (dán link -> tải bằng IDM -> gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
    tự gộp thành 1 video hoàn chỉnh.
 2. Tải video từ Bilibili bằng IDM: dán link, chọn chất lượng, tool đẩy link
    hình + link tiếng sang IDM qua COM API (kèm Referer + cookie) để IDM tải
-   nhanh nhiều luồng, xong thì gộp ở mục 3.
-3. Gộp 2 file đã có (tải bằng IDM): chọn file hình + file tiếng, gộp lại.
+   nhanh nhiều luồng; tool hiện % tải (đo dung lượng file đang lớn dần),
+   tải xong tự điền 2 file vào mục Gộp.
+3. Gộp 2 file đã có (tải bằng IDM): chọn file hình + file tiếng, gộp lại;
+   gộp xong bấm XEM THÀNH QUẢ để mở video.
 Video hoàn thiện lưu vào <thư mục lưu>\<tên video>\<tên video>.mp4
 (thư mục lưu mặc định: Desktop\Video-Da-Gop, nhớ lựa chọn lần sau).
 Cần ffmpeg + yt-dlp: tool tự tìm trên máy (cùng thư mục với .exe, PATH,
@@ -21,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
@@ -247,10 +250,15 @@ def kiem_tra_link(url, cookies):
     best_audio = max(audios, key=lambda f: f.get("abr") or 0) if audios else None
     options = []
     for q in sorted(videos, reverse=True):
+        vsize = videos[q].get("filesize") or videos[q].get("filesize_approx") or 0
+        asize = ((best_audio.get("filesize")
+                  or best_audio.get("filesize_approx") or 0)
+                 if best_audio else 0)
         options.append({"label": QN_LABEL.get(q, "%dp" % q),
                         "quality": q,
                         "video_id": videos[q]["format_id"],
-                        "audio_id": best_audio["format_id"] if best_audio else None})
+                        "audio_id": best_audio["format_id"] if best_audio else None,
+                        "tong_dung_luong": vsize + asize})
     if not options:
         raise RuntimeError("Không tìm thấy chất lượng video nào.")
     return {"title": title, "duration": duration, "options": options}
@@ -395,7 +403,8 @@ def gui_sang_idm(link, referer, cookie_str, local_path, local_filename,
 
 def tai_bang_idm(url, option, cookies, outdir, log):
     """Lấy link hình + tiếng rồi đẩy cả 2 sang IDM tải nhanh nhiều luồng.
-    Trả về (thư mục chứa file, tên file hình, tên file tiếng).
+    Trả về (thư mục chứa file, tên file hình, tên file tiếng,
+    tổng dung lượng ước tính để theo dõi %).
     IDM tải xong thì dùng mục Gộp để gộp lại."""
     info = kiem_tra_link(url, cookies)
     ten = sanitize_ten(info["title"])
@@ -418,7 +427,7 @@ def tai_bang_idm(url, option, cookies, outdir, log):
         gui_sang_idm(link_audio, referer, cookie_str, folder, ten_audio,
                      UA_TRINH_DUYET)
         log("Đã đẩy link tiếng sang IDM: " + ten_audio)
-    return folder, ten_video, ten_audio if link_audio else None
+    return folder, ten_video, ten_audio if link_audio else None, option.get("tong_dung_luong") or 0
 
 
 class App(tk.Tk):
@@ -484,6 +493,13 @@ class App(tk.Tk):
                   command=self.chon_cookies).grid(row=4, column=2, **pad)
         tk.Label(f1, text="Không có cookies thì thường chỉ tải được 480p.",
                  fg="gray").grid(row=5, column=0, columnspan=3, sticky="w", **pad)
+        self.tien_trinh_idm = ttk.Progressbar(f1, mode="determinate",
+                                              maximum=100)
+        self.tien_trinh_idm.grid(row=6, column=0, columnspan=2,
+                                 sticky="ew", **pad)
+        self.phan_tram_var = tk.StringVar(value="")
+        tk.Label(f1, textvariable=self.phan_tram_var, fg="gray").grid(
+            row=6, column=2, sticky="w", **pad)
 
         # ---- Khung 2: Gộp 2 file đã có ----
         f2 = tk.LabelFrame(self, text=" 2. Gộp 2 file đã có (tải bằng IDM) ",
@@ -511,6 +527,13 @@ class App(tk.Tk):
                                  bg="#2e7d32", fg="white", height=2,
                                  command=self.bam_gop)
         self.btn_gop.grid(row=3, column=0, columnspan=3, sticky="ew", **pad)
+
+        self.thanh_qua = None
+        self.btn_xem = tk.Button(f2, text="XEM THÀNH QUẢ",
+                                 font=("", 11, "bold"), bg="#6a1b9a",
+                                 fg="white", command=self.bam_xem,
+                                 state="disabled")
+        self.btn_xem.grid(row=4, column=0, columnspan=3, sticky="ew", **pad)
 
         # ---- Thư mục lưu ----
         tk.Label(self, text="Thư mục lưu:").grid(row=2, column=0, sticky="w", **pad)
@@ -690,22 +713,95 @@ class App(tk.Tk):
 
     def _idm_worker(self, url, option, cookies, outdir):
         try:
-            folder, ten_video, ten_audio = tai_bang_idm(
+            folder, ten_video, ten_audio, tong_dung_luong = tai_bang_idm(
                 url, option, cookies, outdir, self.log_threadsafe)
-            self.after(0, self._idm_xong, folder, ten_video, ten_audio)
+            self.after(0, self._idm_xong, folder, ten_video, ten_audio,
+                       tong_dung_luong)
         except Exception as e:
             self.after(0, self._idm_loi, str(e))
         finally:
             self.after(0, lambda: self.btn_idm.config(state="normal"))
 
-    def _idm_xong(self, folder, ten_video, ten_audio):
-        self.status_var.set("Đã đẩy sang IDM.")
+    def _idm_xong(self, folder, ten_video, ten_audio, tong_dung_luong):
+        self.status_var.set("Đã đẩy sang IDM, đang theo dõi tiến độ...")
         self.ghi_log("ĐÃ ĐẨY SANG IDM. IDM đang tải 2 file vào: " + folder)
         messagebox.showinfo(
             "Đã đẩy sang IDM",
-            "IDM đang tải 2 file:\n- %s\n- %s\n\nTải xong thì bấm GỘP VIDEO ở mục 2 "
-            "(bấm 'Chọn thư mục chứa 2 file' rồi chọn thư mục này) để gộp lại."
+            "IDM đang tải 2 file:\n- %s\n- %s\n\nTool sẽ hiện %% tải ở thanh "
+            "tiến độ bên dưới, tải xong tự điền 2 file vào mục Gộp."
             % (ten_video, ten_audio or "(chỉ có hình)"))
+        threading.Thread(target=self._theo_doi_idm,
+                         args=(folder, ten_video, ten_audio, tong_dung_luong),
+                         daemon=True).start()
+
+    def _cap_nhat_tien_trinh(self, ty_le):
+        self.tien_trinh_idm["value"] = ty_le
+        self.phan_tram_var.set("%d%%" % ty_le)
+        self.status_var.set("IDM đang tải... %d%%" % ty_le)
+
+    def _theo_doi_idm(self, folder, ten_video, ten_audio, tong_dung_luong):
+        """Theo dõi tiến độ tải của IDM bằng cách đo dung lượng file đang
+        lớn dần. Khi đủ dung lượng (hoặc file ngừng lớn sau 3 lần đo) thì
+        coi là tải xong, tự điền 2 file vào mục Gộp."""
+        duong_video = os.path.join(folder, ten_video)
+        duong_audio = os.path.join(folder, ten_audio) if ten_audio else None
+        lan_khong_doi = 0
+        kich_truoc = -1
+        while True:
+            time.sleep(2)
+            kich_hien = 0
+            for p in (duong_video, duong_audio):
+                if p and os.path.isfile(p):
+                    try:
+                        kich_hien += os.path.getsize(p)
+                    except OSError:
+                        pass
+            if kich_hien == kich_truoc and kich_hien > 0:
+                lan_khong_doi += 1
+            else:
+                lan_khong_doi = 0
+            kich_truoc = kich_hien
+            if tong_dung_luong and tong_dung_luong > 0:
+                ty_le = min(100, int(kich_hien * 100 / tong_dung_luong))
+                self.after(0, self._cap_nhat_tien_trinh, ty_le)
+                if kich_hien >= tong_dung_luong:
+                    break
+                if lan_khong_doi >= 15:
+                    self.after(0, self._tai_idm_dung,
+                               "File ngừng lớn trước khi đủ dung lượng "
+                               "dự kiến. Kiểm tra IDM xem có lỗi không.")
+                    return
+            else:
+                if lan_khong_doi >= 3:
+                    break
+        self.after(0, self._tai_idm_hoan_tat, folder, ten_video, ten_audio)
+
+    def _tai_idm_hoan_tat(self, folder, ten_video, ten_audio):
+        self.tien_trinh_idm["value"] = 100
+        self.phan_tram_var.set("100%")
+        duong_video = os.path.join(folder, ten_video)
+        duong_audio = os.path.join(folder, ten_audio) if ten_audio else ""
+        if os.path.isfile(duong_video):
+            self.video_var.set(duong_video)
+        if duong_audio and os.path.isfile(duong_audio):
+            self.audio_var.set(duong_audio)
+        self.status_var.set("Tải xong. Bấm GỘP VIDEO để gộp.")
+        self.ghi_log("IDM TẢI XONG. Đã điền sẵn 2 file vào mục Gộp.")
+        messagebox.showinfo("Tải xong rồi!",
+                            "IDM đã tải xong 2 file.\nBấm GỘP VIDEO ở mục 2 "
+                            "để gộp lại.")
+
+    def _tai_idm_dung(self, msg):
+        self.status_var.set("Tải IDM có vẻ dừng.")
+        self.ghi_log("TẢI IDM DỪNG: " + msg)
+        messagebox.showwarning("Tải IDM có vẻ dừng", msg)
+
+    def bam_xem(self):
+        if getattr(self, "thanh_qua", None) and os.path.isfile(self.thanh_qua):
+            os.startfile(self.thanh_qua)
+        else:
+            messagebox.showinfo("Chưa có thành quả",
+                                "Chưa gộp xong video nào. Gộp xong rồi bấm lại.")
 
     def _idm_loi(self, msg):
         self.status_var.set("Đẩy sang IDM thất bại.")
@@ -802,6 +898,8 @@ class App(tk.Tk):
 
     def _gop_xong(self, out_path, folder):
         self.ghi_log("GỘP XONG: " + out_path)
+        self.thanh_qua = out_path
+        self.btn_xem.config(state="normal")
         if messagebox.askyesno("Xong rồi!",
                                "Video đã gộp xong:\n" + out_path +
                                "\n\nMở thư mục chứa video?"):

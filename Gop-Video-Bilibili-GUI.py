@@ -6,6 +6,11 @@ tự gộp sau khi IDM tải xong, theo dõi % tải (quét thư mục) + % gộ
 cửa sổ, gộp xong tự xóa 2 file gốc.
 v6.1: thiếu yt-dlp/ffmpeg thì tool hỏi và tự tải về (yt-dlp từ GitHub,
 ffmpeg bản essentials từ gyan.dev) thay vì chỉ báo link tải tay.
+v6.2 (Chipchipdownload): đổi tên hiển thị thành Chipchipdownload, icon gà
+con; thêm nút Kiểm tra cập nhật (tự vá exe từ GitHub Release, cần token
+GitHub chỉ-đọc repo này vì repo là private); có bản cài đặt Inno Setup
+(cài vào Program Files\\Chipchipdownload, shortcut Desktop + Start Menu;
+gỡ cài đặt xóa luôn yt-dlp/ffmpeg/config/jobs đã tải về khi chạy).
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -36,9 +41,16 @@ import tkinter as tk
 import urllib.request
 import uuid
 import zipfile
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
-APP_TITLE = "Gộp Video Bilibili"
+APP_TITLE = "Chipchipdownload"
+VERSION = "6.2"
+GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
+GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
+                             + GITHUB_REPO + "/releases/latest")
+GITHUB_API_VERSION_JSON = ("https://api.github.com/repos/"
+                           + GITHUB_REPO + "/contents/version.json")
+GITHUB_RELEASES_URL = "https://github.com/" + GITHUB_REPO + "/releases"
 FFMPEG_LINK = "https://www.gyan.dev/ffmpeg/builds/"
 YTDLP_LINK = "https://github.com/yt-dlp/yt-dlp/releases"
 # Link tải trực tiếp (bản mới nhất) để tool tự tải khi thiếu thư viện.
@@ -258,6 +270,131 @@ def tai_ffmpeg_tu_dong(log_cb=None):
     if log_cb:
         log_cb("Đã tải xong ffmpeg: " + ffmpeg_path)
     return ffmpeg_path
+
+
+def so_sanh_version(a, b):
+    """So sánh 2 chuỗi version dạng '6.2' / 'v6.10': trả 1 nếu a>b, -1 nếu
+    a<b, 0 nếu bằng. Dùng để biết bản trên GitHub có mới hơn bản đang chạy."""
+    def tach(s):
+        s = (s or "").strip().lstrip("vV")
+        parts = []
+        for p in s.split("."):
+            try:
+                parts.append(int(p))
+            except ValueError:
+                parts.append(0)
+        return parts
+    pa, pb = tach(a), tach(b)
+    n = max(len(pa), len(pb))
+    pa += [0] * (n - len(pa))
+    pb += [0] * (n - len(pb))
+    if pa > pb:
+        return 1
+    if pa < pb:
+        return -1
+    return 0
+
+
+def lay_token_github():
+    """Token GitHub chỉ-đọc repo này (do người dùng nhập 1 lần, lưu ở
+    config.json cạnh exe). Repo là private nên không có token thì không
+    đọc được Release/version.json trên GitHub."""
+    return (doc_config().get("github_token") or "").strip()
+
+
+def luu_token_github(token):
+    cfg = doc_config()
+    cfg["github_token"] = (token or "").strip()
+    luu_config(cfg)
+
+
+def goi_github_api(url, token):
+    """GET JSON từ GitHub API (cần token vì repo private)."""
+    req = urllib.request.Request(
+        url, headers={"Accept": "application/vnd.github+json",
+                      "User-Agent": UA_TRINH_DUYET,
+                      "Authorization": "token " + token})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def kiem_tra_cap_nhat(token):
+    """(v6.2) Kiểm tra bản mới trên GitHub. Trả về dict:
+    {version_moi, tag, tai_url, ten_file} hoặc None nếu đã là bản mới nhất.
+    Ưu tiên đọc GitHub Releases (latest); nếu chưa có Release nào thì đọc
+    version.json trong repo. Raise RuntimeError nếu không đọc được."""
+    if not token:
+        raise RuntimeError("CHUA_CO_TOKEN")
+    # 1) Thử Releases/latest.
+    try:
+        data = goi_github_api(GITHUB_API_LATEST_RELEASE, token)
+        tag = (data.get("tag_name") or "").strip()
+        if tag and so_sanh_version(tag, VERSION) > 0:
+            tai_url = None
+            ten_file = None
+            for asset in data.get("assets") or []:
+                if (asset.get("name") or "") == APP_TITLE + ".exe":
+                    tai_url = asset.get("url")
+                    ten_file = asset.get("name")
+                    break
+            return {"version_moi": tag.lstrip("vV"), "tag": tag,
+                    "tai_url": tai_url, "ten_file": ten_file}
+        if tag:
+            return None
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise RuntimeError("GitHub API báo lỗi HTTP %d." % e.code)
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError("Không kết nối được GitHub: %s" % e)
+    # 2) Chưa có Release: đọc version.json trong repo.
+    try:
+        data = goi_github_api(GITHUB_API_VERSION_JSON, token)
+        import base64
+        noi_dung = json.loads(base64.b64decode(data.get("content") or "").decode("utf-8"))
+        ver = (noi_dung.get("version") or "").strip()
+        if ver and so_sanh_version(ver, VERSION) > 0:
+            return {"version_moi": ver, "tag": "v" + ver,
+                    "tai_url": None, "ten_file": None}
+        return None
+    except Exception as e:
+        raise RuntimeError("Không đọc được version trên GitHub: %s" % e)
+
+
+def tai_ban_moi_va_cap_nhat(tai_url, token, log_cb=None):
+    """(v6.2) Tải exe bản mới về file tạm <exe>.new, ghi script cập nhật
+    (capnhat.bat) rồi trả về đường dẫn script. Script chờ tool thoát
+    (file exe hết bị khóa) rồi thay exe cũ bằng exe mới và mở lại tool.
+    Người gọi phải thoát tool ngay sau khi chạy script này."""
+    exe_hien_tai = os.path.abspath(sys.executable) if getattr(sys, "frozen", False) else None
+    if not exe_hien_tai:
+        raise RuntimeError("Đang chạy dạng mã nguồn (.py), không tự vá exe được. "
+                           "Hãy dùng bản .exe đã cài.")
+    thu_muc = os.path.dirname(exe_hien_tai)
+    ten_exe = os.path.basename(exe_hien_tai)
+    file_moi = os.path.join(thu_muc, ten_exe + ".new")
+    if log_cb:
+        log_cb("Đang tải bản mới về...")
+    req = urllib.request.Request(
+        tai_url, headers={"Accept": "application/octet-stream",
+                          "User-Agent": UA_TRINH_DUYET,
+                          "Authorization": "token " + token})
+    with urllib.request.urlopen(req, timeout=600) as resp, open(file_moi, "wb") as f:
+        shutil.copyfileobj(resp, f)
+    if not os.path.isfile(file_moi) or os.path.getsize(file_moi) < 1000000:
+        raise RuntimeError("Tải bản mới về nhưng file không hợp lệ.")
+    bat_path = os.path.join(thu_muc, "capnhat.bat")
+    with open(bat_path, "w", encoding="utf-8") as f:
+        f.write("@echo off\r\n")
+        f.write("chcp 65001 >nul\r\n")
+        f.write(":cho\r\n")
+        f.write("ping -n 2 127.0.0.1 >nul\r\n")
+        f.write('move /y "%s" "%s" >nul 2>&1\r\n' % (file_moi, exe_hien_tai))
+        f.write("if errorlevel 1 goto cho\r\n")
+        f.write('start "" "%s"\r\n' % exe_hien_tai)
+        f.write('del "%%~f0"\r\n')
+    return bat_path
 
 
 def file_co_video(ffprobe, path):
@@ -1377,7 +1514,7 @@ class QuanLy(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title(APP_TITLE + " - Quản lý (v6.1)")
+        self.title("%s - Quản lý (v%s)" % (APP_TITLE, VERSION))
         self.geometry("640x520")
         self.resizable(True, True)
         self.cua_so_mo = {}
@@ -1399,6 +1536,8 @@ class QuanLy(tk.Tk):
                   command=self.mo_lai_job_da_chon).pack(side="left", padx=4)
         tk.Button(hang_nut, text="Xóa job đã chọn",
                   command=self.xoa_job_da_chon).pack(side="left", padx=4)
+        tk.Button(hang_nut, text="Kiểm tra cập nhật",
+                  command=self.bam_kiem_tra_cap_nhat).pack(side="left", padx=4)
 
         tk.Label(self, text="Lịch sử job (bấm đúp để mở lại cửa sổ):").grid(
             row=1, column=0, columnspan=3, sticky="w", **pad)
@@ -1538,6 +1677,120 @@ class QuanLy(tk.Tk):
         jobs = [j for j in doc_jobs() if j.get("id") != job.get("id")]
         luu_jobs(jobs)
         self.cap_nhat_bang()
+
+    # ---------- cập nhật (v6.2) ----------
+    def bam_kiem_tra_cap_nhat(self):
+        """Nút Kiểm tra cập nhật: repo là private nên cần token GitHub
+        chỉ-đọc repo này. Chưa có token thì hỏi nhập (lưu vào config.json),
+        có rồi thì kiểm tra bản mới trên GitHub Releases."""
+        token = lay_token_github()
+        if not token:
+            if not messagebox.askyesno(
+                    "Cần token GitHub để kiểm tra cập nhật",
+                    "Repo %s là repo riêng (private) nên tool cần 1 token "
+                    "GitHub CHỈ ĐỌC repo này để kiểm tra bản mới.\n\n"
+                    "Cách lấy token (1 lần): vào GitHub → Settings → "
+                    "Developer settings → Personal access tokens → "
+                    "Fine-grained tokens → Generate new token → chỉ chọn "
+                    "repo %s, quyền Contents: Read-only.\n\n"
+                    "Bấm Có để nhập token ngay, bấm Không để xem hướng dẫn "
+                    "tải bản mới bằng tay." % (GITHUB_REPO, GITHUB_REPO)):
+                messagebox.showinfo(
+                    "Phiên bản hiện tại: v%s" % VERSION,
+                    "Bản đang dùng: v%s.\n\n"
+                    "Để lấy bản mới bằng tay: mở %s trên trình duyệt "
+                    "(đăng nhập tài khoản GitHub có quyền xem repo), tải "
+                    "file %s.exe bản mới nhất về rồi ghi đè lên file exe "
+                    "đang dùng." % (VERSION, GITHUB_RELEASES_URL, APP_TITLE))
+                return
+            token = simpledialog.askstring(
+                "Nhập token GitHub (chỉ đọc)",
+                "Dán token GitHub fine-grained (chỉ chọn repo %s,\n"
+                "quyền Contents: Read-only):" % GITHUB_REPO,
+                show="*")
+            if not token or not token.strip():
+                return
+            luu_token_github(token.strip())
+            token = token.strip()
+        threading.Thread(target=self._cap_nhat_worker,
+                         args=(token,), daemon=True).start()
+
+    def _cap_nhat_worker(self, token):
+        try:
+            ket_qua = kiem_tra_cap_nhat(token)
+            self.after(0, self._cap_nhat_xong, ket_qua)
+        except Exception as e:
+            self.after(0, self._cap_nhat_loi, str(e))
+
+    def _cap_nhat_xong(self, ket_qua):
+        if not ket_qua:
+            messagebox.showinfo("Đã là bản mới nhất",
+                                "Bạn đang dùng bản mới nhất: v%s." % VERSION)
+            return
+        ver_moi = ket_qua["version_moi"]
+        if not ket_qua.get("tai_url"):
+            messagebox.showinfo(
+                "Có bản mới: v%s" % ver_moi,
+                "Đã có bản v%s nhưng bản này chưa có file exe đính kèm "
+                "trên Release.\n\nTải bản cài đặt mới tại:\n%s"
+                % (ver_moi, GITHUB_RELEASES_URL))
+            return
+        if not messagebox.askyesno(
+                "Có bản mới: v%s" % ver_moi,
+                "Bản đang dùng: v%s → Bản mới: v%s.\n\n"
+                "Bấm Có để tải exe mới về và vá lên bản đang dùng "
+                "(không cần cài lại, giữ nguyên lịch sử job + cài đặt). "
+                "Tool sẽ tự thoát rồi mở lại bản mới."
+                % (VERSION, ver_moi)):
+            return
+        token = lay_token_github()
+        threading.Thread(target=self._tai_ban_moi_worker,
+                         args=(ket_qua["tai_url"], token),
+                         daemon=True).start()
+
+    def _cap_nhat_loi(self, msg):
+        if msg == "CHUA_CO_TOKEN":
+            return
+        if "401" in msg or "Bad credentials" in msg:
+            if messagebox.askyesno(
+                    "Token không đúng",
+                    "Token GitHub đã lưu không dùng được (sai hoặc hết hạn).\n\n"
+                    "Bấm Có để nhập token mới, bấm Không để hủy."):
+                luu_token_github("")
+                self.bam_kiem_tra_cap_nhat()
+            return
+        messagebox.showerror(
+            "Không kiểm tra được cập nhật",
+            msg + "\n\nBản đang dùng: v%s.\nLấy bản mới bằng tay tại:\n%s"
+            % (VERSION, GITHUB_RELEASES_URL))
+
+    def _tai_ban_moi_worker(self, tai_url, token):
+        try:
+            bat_path = tai_ban_moi_va_cap_nhat(tai_url, token)
+            self.after(0, self._tai_ban_moi_xong, bat_path)
+        except Exception as e:
+            self.after(0, self._tai_ban_moi_loi, str(e))
+
+    def _tai_ban_moi_xong(self, bat_path):
+        # Chạy script cập nhật (chờ tool thoát rồi thay exe + mở lại).
+        try:
+            subprocess.Popen(["cmd", "/c", bat_path],
+                             **chay_ngam_kwargs())
+        except Exception:
+            subprocess.Popen(bat_path, shell=True, **chay_ngam_kwargs())
+        messagebox.showinfo(
+            "Đang cập nhật...",
+            "Đã tải xong bản mới. Tool sẽ thoát ngay, script cập nhật sẽ "
+            "thay exe cũ bằng exe mới rồi tự mở lại tool.")
+        try:
+            self.destroy()
+        finally:
+            os._exit(0)
+
+    def _tai_ban_moi_loi(self, msg):
+        messagebox.showerror(
+            "Tải bản mới thất bại",
+            msg + "\n\nLấy bản mới bằng tay tại:\n" + GITHUB_RELEASES_URL)
 
     def dong_quan_ly(self):
         self.luu_cau_hinh()

@@ -3,6 +3,7 @@ name: Build EXE
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 jobs:
@@ -19,10 +20,65 @@ jobs:
         run: pip install pyinstaller comtypes
 
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --name "Gop-Video-Bilibili" Gop-Video-Bilibili-GUI.py
+        run: pyinstaller --onefile --windowed --name "Chipchipdownload" --icon chipchipdownload.ico Gop-Video-Bilibili-GUI.py
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
-          name: Gop-Video-Bilibili-exe
-          path: dist/Gop-Video-Bilibili.exe
+          name: Chipchipdownload-exe
+          path: dist/Chipchipdownload.exe
+
+  installer:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download EXE artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Chipchipdownload-exe
+          path: dist
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build installer
+        shell: powershell
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (Test-Path $iscc) { & $iscc installer.iss } else { ISCC.exe installer.iss }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chipchipdownload-Setup
+          path: installer-out/Chipchipdownload-Setup-*.exe
+
+  release:
+    needs: [build, installer]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download EXE artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Chipchipdownload-exe
+          path: release
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Chipchipdownload-Setup
+          path: release
+
+      - name: Create GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $setup = (Get-ChildItem release/Chipchipdownload-Setup-*.exe | Select-Object -First 1).FullName
+          gh release create $tag "release/Chipchipdownload.exe" $setup --title "Chipchipdownload $tag" --notes "Chipchipdownload $tag. Cai dat bang file Setup, hoac chay truc tiep file Chipchipdownload.exe. Nut Kiem tra cap nhat trong tool tu va exe tu Release nay (can token GitHub chi-doc repo private)."

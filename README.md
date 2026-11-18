@@ -1,17 +1,34 @@
-# Gộp Video Bilibili
+# Chipchipdownload
 
-Tool gộp video Bilibili thành 1 video hoàn chỉnh có cả hình lẫn tiếng, để đưa
-vào iContent làm tiếp. Có 2 chức năng:
+Tool tải + gộp video Bilibili thành 1 video hoàn chỉnh có cả hình lẫn tiếng,
+để đưa vào iContent làm tiếp. Tên hiển thị: **Chipchipdownload** (v6.2).
+File nguồn vẫn là `Gop-Video-Bilibili-GUI.py` trong repo này.
+
+## Cài đặt
+
+Chạy file `Chipchipdownload-Setup-vX.Y.exe` (build từ GitHub Actions):
+cài vào `C:\Program Files\Chipchipdownload`, tạo shortcut Desktop +
+Start Menu tên **Chipchipdownload** (icon gà con). Cũng có thể chạy trực
+tiếp file `Chipchipdownload.exe` (bản portable, không cần cài).
+
+Gỡ cài đặt sẽ xóa luôn các thư viện tool đã tự tải về khi chạy
+(`yt-dlp.exe`, `ffmpeg.exe`, `ffprobe.exe`, `config.json`, `jobs.json`)
+vì chúng nằm cùng thư mục cài đặt.
 
 ## 1. Tải video từ Bilibili
+
+Mở cửa sổ quản lý, bấm **+ Mở cửa sổ mới** — mỗi cửa sổ xử lý 1 video.
 
 1. Dán link Bilibili (BV...) vào ô link, bấm **Kiểm tra link**.
 2. Chọn chất lượng (1080p / 720p / 480p...).
 3. Bấm **TẢI XUỐNG + GỘP LUÔN** để tải bằng yt-dlp rồi tự gộp, hoặc bấm
    **TẢI BẰNG IDM (nhanh, nhiều luồng)** để đẩy link hình + link tiếng sang
-   IDM tải nhanh. Tool hiện **% tải** ở thanh tiến độ (đo dung lượng file
-   đang lớn dần so với dung lượng dự kiến), tải xong **tự điền 2 file vào
-   mục Gộp**, chỉ việc bấm **GỘP VIDEO**.
+   IDM tải nhanh. Tool hiện **% tải** ở thanh tiến độ (quét dung lượng mọi
+   file media trong thư mục, kể cả `.m4s`), tải xong **tự nhận diện cặp
+   file rồi TỰ GỘP luôn**, không cần bấm tay. Gộp xong tự xóa 2 file gốc
+   cho nhẹ ổ (có thể tắt ở ô tick trong cửa sổ job).
+4. Lịch sử job lưu vào `jobs.json` — lần sau mở tool, các job chưa xong
+   sẽ tự mở lại cửa sổ để tiếp tục.
 
 ### Vì sao phần tải IDM làm được (và lệnh IDM thường thì không)
 
@@ -28,10 +45,39 @@ cookie (đọc từ file cookies.txt) nên IDM tải được, nhanh nhiều lu�
 Bilibili tách hình/tiếng thành 2 luồng DASH nên IDM tải về 2 file riêng
 (1 file chỉ có hình + 1 file chỉ có tiếng). Chọn 2 file đó (hoặc bấm **Chọn
 thư mục chứa 2 file** để tool tự nhận diện), bấm **GỘP VIDEO**. Gộp xong
-thì bấm **XEM THÀNH QUẢ** để mở video vừa gộp ra xem.
+thì bấm **XEM THÀNH QUẢ** để mở video vừa gộp ra xem. Thanh **% gộp**
+hiện tiến độ từng cửa sổ.
 
-> Lưu ý: tải bằng IDM xong thì tool tự điền sẵn 2 file vào mục này, không
-> cần chọn tay.
+## Cập nhật
+
+Nút **Kiểm tra cập nhật** ở cửa sổ Quản lý: tool kiểm tra bản mới trên
+GitHub Releases của repo `Cyandeptrai/gop-video-bilibili`, nếu có bản mới
+thì tải exe mới về và **vá lên bản đang dùng** (không cần cài lại, giữ
+nguyên lịch sử job + cài đặt). File exe đang chạy bị Windows khóa nên tool
+dùng script phụ `capnhat.bat`: chờ tool thoát rồi thay exe cũ bằng exe mới
+và tự mở lại tool.
+
+Lưu ý: repo là **private** nên tự cập nhật cần 1 token GitHub **chỉ đọc**
+repo này (fine-grained token, quyền Contents: Read-only). Nhập token 1 lần
+khi tool hỏi, token chỉ lưu ở `config.json` cạnh exe, không nhúng trong
+code. Không có token thì nút Update chỉ hiện phiên bản hiện tại + hướng dẫn
+tải bản mới bằng tay tại trang Releases của repo.
+
+## Thư mục lưu
+
+Video hoàn thiện lưu vào `<thư mục lưu>\<tên video>\<tên video>.mp4`
+(thư mục lưu mặc định: `Desktop\Video-Da-Gop`, nhớ lựa chọn lần sau).
+Ví dụ: `Desktop\Video-Da-Gop\Thanh Dong\Thanh Dong.mp4`.
+
+## Thư viện thiếu thì tool tự tải
+
+- `yt-dlp` + `ffmpeg` trên máy. Tool tự tìm (cùng thư mục với `.exe`,
+  PATH, `C:\ffmpeg`, `C:\iContent`...). Nếu không thấy, tool hỏi và **tự
+  tải về** (yt-dlp từ GitHub, ffmpeg bản essentials từ gyan.dev) thay vì
+  chỉ báo link tải tay.
+- File `cookies.txt` của Bilibili (để tải 1080p). Không có cookies thì thường
+  chỉ tải được 480p. Tool tự nhận file ở
+  `Desktop\Cookiebili\cookies.txt` nếu có, hoặc bấm Chọn để chỉ đường dẫn.
 
 ## Vì sao không bấm nút tải của Cốc Cốc tự động
 
@@ -42,32 +88,17 @@ dễ lệch, không ổn định. Vì vậy tool đẩy link **thẳng sang IDM*
 API (cùng Referer + cookie mà Cốc Cốc gửi) nên tốc độ tải nhanh như nhau,
 không cần mở Cốc Cốc.
 
-## Thư mục lưu
-
-Video hoàn thiện lưu vào `<thư mục lưu>\<tên video>\<tên video>.mp4`
-(thư mục lưu mặc định: `Desktop\Video-Da-Gop`, nhớ lựa chọn lần sau).
-Ví dụ: `Desktop\Video-Da-Gop\Thanh Dong\Thanh Dong.mp4`.
-
-## Yêu cầu
-
-- `ffmpeg` + `yt-dlp` trên máy. Tool tự tìm (cùng thư mục với `.exe`, PATH,
-  `C:\ffmpeg`, `C:\iContent`...). Nếu không thấy, tool báo link tải:
-  - ffmpeg: https://www.gyan.dev/ffmpeg/builds/
-  - yt-dlp: https://github.com/yt-dlp/yt-dlp/releases (file `yt-dlp.exe`)
-- File `cookies.txt` của Bilibili (để tải 1080p). Không có cookies thì thường
-  chỉ tải được 480p. Tool tự nhận file ở
-  `Desktop\Cookiebili\cookies.txt` nếu có, hoặc bấm Chọn để chỉ đường dẫn.
-
-## Vì sao phần tải không dùng lệnh IDM thường
-
-Xem mục 1 ở trên: lệnh dòng lệnh của IDM không gửi được Referer nên tải
-link Bilibili bị 403; tool v3 dùng COM API của IDM để gửi kèm Referer +
-cookie nên tải được.
-
 ## Build
 
-GitHub Actions tự build `.exe` trên Windows mỗi lần push lên `main`
-(`.github/workflows/build-exe.yml`, PyInstaller `--onefile --windowed`).
+GitHub Actions tự build trên Windows mỗi lần push lên `main` hoặc tag `v*`
+(`.github/workflows/build-exe.yml`):
+- Job `build`: PyInstaller `--onefile --windowed --name Chipchipdownload
+  --icon chipchipdownload.ico` → artifact `Chipchipdownload-exe`.
+- Job `installer`: cài Inno Setup (choco), build `installer.iss` →
+  artifact `Chipchipdownload-Setup` (`Chipchipdownload-Setup-vX.Y.exe`).
+- Job `release` (chỉ khi push tag `v*`): tạo GitHub Release, đính kèm exe
+  + file cài đặt (để nút Kiểm tra cập nhật trong tool tải về).
+
 Cần thêm thư viện `comtypes` (để gọi COM API của IDM) — đã có trong
 workflow (`pip install pyinstaller comtypes`).
 

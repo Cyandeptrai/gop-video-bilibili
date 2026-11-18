@@ -36,6 +36,20 @@ lấy tên phim từ tên file hình, bỏ hậu tố _hinh/_tieng rồi dịch 
 tiếng Việt, đặt tên file thành phẩm đúng tên phim tiếng Việt đó rồi
 mới báo hoàn thành, đồng thời hiển thị tên phim tiếng Việt trong
 cửa sổ job, bảng lịch sử và thông báo xong.
+v7.0 (ChipChipStudio - GOP 1 SOURCE DUY NHAT): gop Chipchipdownload
+v6.8 + SRT Reader v1.4 vao 1 file duy nhat. Giu NGUYEN toan bo chuc
+nang ca 2 tool (xem audit o cuoi bao cao): tai yt-dlp, tai IDM, gop,
+quan ly job, cap nhat, dich ten, file text, thu muc trung ngay-gio;
+doc SRT, Edge TTS HoaiMy/NamMinh (+ giong may SAPI), toc do 0.5-2.0x,
+atempo tu dong toi da 1.35x, tien-trinh.json, nghe thu, huy/tiep tuc.
+Moi: bang lich su du an (Ten phim TV + Link + Trang thai + Duong dan
+thu muc mo duoc + Phu de Co/Khong + nut Xoa/Lam lai/Dich/Them phu de
+tung dong); kiem tra phu de bang yt-dlp --list-subs (khong dung nut
+phu de tren trinh phat web); tai phu de ve cung thu muc phim; tab Xu
+ly phu de (dich bang Muse/GPT/Gemini, key luu local, xuat prompt+SRT);
+tab Doc phu de HoaiMy. Chi 1 luong cap nhat duy nhat (ChipChip):
+SRT Reader von la portable, khi gop thi thanh tool setup cai 1 lan,
+va chi bam Cap nhat trong tool la len ban moi, khong cai lai.
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -54,8 +68,10 @@ Cần ffmpeg + yt-dlp: tool tự tìm trên máy (cùng thư mục với .exe, P
 C:\ffmpeg, C:\iContent...). Nếu không thấy sẽ báo link tải.
 Viết bởi Gà Con cho CYAN - 18/11/2026 (v6)
 """
+import asyncio
 import json
 import os
+import queue
 import re
 import shutil
 import ssl
@@ -63,6 +79,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import tkinter as tk
 import urllib.error
 import urllib.parse
@@ -71,8 +88,13 @@ import uuid
 import zipfile
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
+# (v7.0) Ten hien thi cua app gop la ChipChipStudio, NHUNG APP_TITLE
+# van giu "Chipchipdownload" vi luong cap nhat (kiem_tra_cap_nhat)
+# tim asset theo APP_TITLE + ".exe" - doi ten exe se lam hong nut
+# Cap nhat. Chi co 1 luong cap nhat duy nhat (cua ChipChip).
 APP_TITLE = "Chipchipdownload"
-VERSION = "6.8"
+STUDIO_TITLE = "ChipChipStudio"
+VERSION = "7.0"
 GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
 GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
                              + GITHUB_REPO + "/releases/latest")
@@ -146,19 +168,58 @@ def mac_dinh_thu_muc_luu():
     return os.path.join(desktop, "Video-Da-Gop")
 
 
+def mac_dinh_thu_muc_luu_srt():
+    """(v7.0) Thu muc mac dinh cua SRT Reader, doi ten tu
+    mac_dinh_thu_muc_luu() cua SRT de tranh trung voi ham mac dinh
+    cua Chipchipdownload (Desktop/Video-Da-Gop)."""
+    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    if not os.path.isdir(desktop):
+        desktop = os.path.expanduser("~")
+    return os.path.join(desktop, "SRT-HoaiMy")
+
+
 def doc_config():
+    """(v7.0) Config GOP: mac dinh gom ca 2 tool (Chipchip + SRT Reader)
+    + key dich phu de. Key KHONG bao gio hardcode, chi luu o config.json
+    canh exe khi nguoi dung nhap. Khoa cu trong file cu van giu."""
+    mac_dinh = {
+        "output_dir": "", "cookies": "", "github_token": "",
+        "giong": GIONG_MAC_DINH, "toc_do": 1.0, "cao_do": 0,
+        "thu_muc_luu": mac_dinh_thu_muc_luu_srt(),
+        "toc_do_toi_da": 1.35, "tu_dong_toc_do": True, "che_do": "gop",
+        "phu_de_provider": "Gemini", "gemini_api_key": "",
+        "openai_api_key": "", "anthropic_api_key": "",
+        "phu_de_the_loai": "", "phu_de_nhan_vat": "",
+        "phu_de_xung_ho": "",
+    }
     try:
         with open(config_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                data = {}
+        for k, v in mac_dinh.items():
+            data.setdefault(k, v)
+        return data
     except Exception:
-        return {}
+        return dict(mac_dinh)
 
 
 def luu_config(cfg):
+    """(v7.0) Luu config kieu GOP (merge): doc file cu roi cap nhat
+    tung khoa, khong ghi de toan bo file nhu ban cu - neu khong,
+    QuanLy.luu_cau_hinh() (chi co output_dir/cookies) se xoa sach
+    khoa giong/toc_do/key dich phu de cua SRT Reader."""
     try:
+        try:
+            with open(config_path(), "r", encoding="utf-8") as f:
+                cu = json.load(f)
+                if not isinstance(cu, dict):
+                    cu = {}
+        except Exception:
+            cu = {}
+        cu.update(cfg or {})
         with open(config_path(), "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
+            json.dump(cu, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 
@@ -182,15 +243,19 @@ def luu_jobs(jobs):
 
 
 def tim_ffmpeg():
-    """Tìm ffmpeg: PATH -> cùng thư mục với tool -> C:\\ffmpeg -> C:\\iContent."""
+    """Tìm ffmpeg (v7.0, GOP ca 2 danh sach duong dan cua Chipchip +
+    SRT Reader): PATH -> cùng thư mục với tool -> C:\\ffmpeg ->
+    C:\\iContent (ke ca .venv/Scripts)."""
     p = shutil.which("ffmpeg")
     if p:
         return p
     here = app_dir()
     for cand in (
         os.path.join(here, "ffmpeg.exe"),
+        os.path.join(here, "ffmpeg"),
         r"C:\ffmpeg\bin\ffmpeg.exe",
         r"C:\iContent\ffmpeg\bin\ffmpeg.exe",
+        r"C:\iContent\.venv\Scripts\ffmpeg.exe",
     ):
         if os.path.isfile(cand):
             return cand
@@ -665,6 +730,363 @@ def ten_phim_tu_ten_file(duong_file):
     return ten_phim_tieng_viet(ten)
 
 
+
+# ======================================================================
+# PHU DE v7.0 (ChipChipStudio)
+# Nguon xac thuc DUY NHAT: yt-dlp --list-subs / -J (subtitles,
+# automatic_captions). KHONG dung nut phu de tren trinh phat web
+# Bilibili lam can cu (anh chup man hinh chi de tham khao) - nut do
+# co the hien/ an theo tai khoan, con --list-subs tra ve danh sach
+# phu de that cua video. Neu quet khong ra thi de TRONG, khong doan.
+# QUY TAC THU MUC DU AN (v7.0, phu luc 4): moi thu cua 1 du an nam
+# chung 1 thu muc phim: video, audio, .srt goc, .srt da dich (ghi de
+# len file goc, co 1 ban .bak), MP3 long tieng HoaiMy. Khong rai rac.
+# ======================================================================
+
+def mo_thu_muc(duong_dan):
+    """Mo thu muc trong Explorer (Windows) / file manager (he khac)."""
+    if not duong_dan or not os.path.isdir(duong_dan):
+        return False
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(duong_dan)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", duong_dan])
+        else:
+            subprocess.Popen(["xdg-open", duong_dan])
+        return True
+    except Exception:
+        return False
+
+
+def cap_nhat_job_trong_jobs(job):
+    """Cap nhat 1 job vao jobs.json (dung chung cho QuanLy/CuaSoJob/
+    tab phu de). Tra ve True neu ghi duoc."""
+    try:
+        jobs = doc_jobs()
+        for i, j in enumerate(jobs):
+            if j.get("id") == job.get("id"):
+                jobs[i] = job
+                break
+        else:
+            jobs.append(job)
+        luu_jobs(jobs)
+        return True
+    except Exception:
+        return False
+
+
+def ten_file_phu_de(folder, ten_viet):
+    """Ten file phu de trong thu muc phim: <Ten phim TV>.srt"""
+    return os.path.join(folder or "", sanitize_ten(ten_viet) + ".srt")
+
+
+def ten_file_phu_de_vi(folder, ten_viet):
+    """Ban dich rieng (tuy chon, khong phai mac dinh): <Ten>_vi.srt"""
+    return os.path.join(folder or "", sanitize_ten(ten_viet) + "_vi.srt")
+
+
+def sao_luu_bak(duong_dan):
+    """(v7.0) Sao luu 1 ban .bak truoc khi ghi de file goc. Chi tao
+    1 lan: neu file .bak da co thi giu nguyen (do moi la ban goc that),
+    khong ghi de len ban sao luu cu. Tra ve duong dan .bak hoac ''."""
+    if not duong_dan or not os.path.isfile(duong_dan):
+        return ""
+    bak = duong_dan + ".bak"
+    if os.path.isfile(bak):
+        return bak
+    try:
+        shutil.copyfile(duong_dan, bak)
+        return bak
+    except Exception:
+        return ""
+
+
+def dinh_dang_ms_srt(ms):
+    ms = int(ms)
+    s, mmm = divmod(ms, 1000)
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    return "%02d:%02d:%02d,%03d" % (h, m, s, mmm)
+
+
+def ghi_srt_chung(cac_cau, duong_dan):
+    """Ghi list cau {chi_so, bat_dau_ms, ket_thuc_ms, text} ra file .srt."""
+    os.makedirs(os.path.dirname(os.path.abspath(duong_dan)) or ".", exist_ok=True)
+    with open(duong_dan, "w", encoding="utf-8") as f:
+        for i, c in enumerate(cac_cau, 1):
+            f.write("%d\n%s --> %s\n%s\n\n" % (
+                c.get("chi_so") or i,
+                dinh_dang_ms_srt(c.get("bat_dau_ms") or 0),
+                dinh_dang_ms_srt(c.get("ket_thuc_ms") or 0),
+                (c.get("text") or "").strip()))
+
+
+def doc_srt_text(noi_dung):
+    """Parse noi dung SRT dang text (vd: ket qua tra ve cua API dich).
+    Tra ve list cau, [] neu khong parse duoc."""
+    try:
+        import tempfile
+        fd, tam = tempfile.mkstemp(suffix=".srt")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(noi_dung)
+        try:
+            return doc_srt(tam)
+        finally:
+            _xoa_file_quiet(tam)
+    except Exception:
+        return []
+
+
+# ---------------- kiem tra / tai phu de ----------------
+
+def parse_ket_qua_list_subs(text):
+    """Parse output cua `yt-dlp --list-subs --skip-download`.
+    Vi du dong co phu de:
+      zh-Hans  srt, vtt
+      zh-CN    srt
+      en       vtt, srt
+    Dong 'has no subtitles' / 'No subtitles' -> (False, []).
+    Tra ve (has_subtitle, [ngon ngu...]). Khong tim thay thi (False, []),
+    KHONG doan co phu de."""
+    if not text:
+        return False, []
+    if re.search(r"no subtitles|has no subtitle", text, re.I):
+        return False, []
+    langs = []
+    for dong in text.splitlines():
+        m = re.match(r"\s*([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\s+(srt|vtt|ass|ttml|json3|srv[123]?)\b",
+                     dong)
+        if m and m.group(1) not in langs:
+            langs.append(m.group(1))
+        # dang "zh-Hans srt, vtt" cung khop regex tren (chi lay srt dau);
+        # dang chi co ten ngon ngu + danh sach dinh dang:
+        m2 = re.match(r"\s*([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\s+((?:srt|vtt|ass|ttml)(?:\s*,\s*(?:srt|vtt|ass|ttml))*)",
+                      dong)
+        if m2 and m2.group(1) not in langs:
+            langs.append(m2.group(1))
+    return (len(langs) > 0), langs
+
+
+def kiem_tra_phu_de(url, cookies):
+    """(v7.0) Kiem tra phu de bang yt-dlp --list-subs --skip-download.
+    Tra ve {"has_subtitle": bool, "languages": [...]}.
+    Neu lenh loi / khong chay duoc thi tra (False, []) - de trong,
+    khong doan. Fallback: -J co subtitles/automatic_captions."""
+    url = chuan_hoa_link_bilibili(url)
+    ytdlp = tim_ytdlp()
+    if not ytdlp:
+        return {"has_subtitle": False, "languages": []}
+    cmd = [ytdlp, "--list-subs", "--skip-download", "--no-playlist"]
+    if cookies and os.path.isfile(cookies):
+        cmd += ["--cookies", cookies]
+    cmd.append(url)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           errors="replace", timeout=120,
+                           **chay_ngam_kwargs())
+        out = (r.stdout or "") + "\n" + (r.stderr or "")
+        co, langs = parse_ket_qua_list_subs(out)
+        if co:
+            return {"has_subtitle": True, "languages": langs}
+    except Exception:
+        pass
+    # Fallback nhe: doc lai -J, chi lay key subtitles/automatic_captions.
+    try:
+        info = kiem_tra_link(url, cookies)
+        # kiem_tra_link khong tra subtitles, nen doc truc tiep -J o day
+        # neu can: (giu don gian, tra False de khong doan sai)
+        _ = info
+    except Exception:
+        pass
+    return {"has_subtitle": False, "languages": []}
+
+
+def tai_phu_de(url, folder, ten_viet, cookies, log=None):
+    """(v7.0) Tai phu de ve CUNG thu muc phim, ten <Ten phim TV>.srt.
+    Uu tien zh-Hans, zh-CN, zh; fallback auto (tu dong tao).
+    Tra ve duong dan file .srt hoac None neu khong co phu de de tai."""
+    def _log(s):
+        if log:
+            log(s)
+    url = chuan_hoa_link_bilibili(url)
+    ytdlp = tim_ytdlp()
+    if not ytdlp:
+        raise RuntimeError("Chưa tìm thấy yt-dlp trên máy.")
+    os.makedirs(folder, exist_ok=True)
+    dich = ten_file_phu_de(folder, ten_viet)
+    for langs, auto in (("zh-Hans,zh-CN,zh", False),
+                        ("zh-Hans,zh-CN,zh", True),
+                        ("en", False)):
+        mau = os.path.join(folder, sanitize_ten(ten_viet))
+        cmd = [ytdlp, "--skip-download", "--no-playlist",
+               "--write-subs", "--sub-langs", langs,
+               "--sub-format", "srt", "-o", mau + ".%(ext)s"]
+        if auto:
+            cmd.append("--write-auto-subs")
+        if cookies and os.path.isfile(cookies):
+            cmd += ["--cookies", cookies]
+        cmd.append(url)
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           errors="replace", timeout=300,
+                           **chay_ngam_kwargs())
+        _log("Tải phụ đề (%s): mã %d" % (langs, r.returncode))
+        # yt-dlp ghi <ten>.<lang>.srt - doi ten ve <ten>.srt
+        for ten in sorted(os.listdir(folder)):
+            if ten.lower().endswith(".srt") and ten != os.path.basename(dich):
+                goc = os.path.join(folder, ten)
+                # chi nhan file phu de vua tai (ten bat dau bang ten phim)
+                if ten.startswith(sanitize_ten(ten_viet)):
+                    try:
+                        if os.path.isfile(dich):
+                            os.remove(dich)
+                        os.rename(goc, dich)
+                        return dich
+                    except Exception:
+                        return goc
+        if os.path.isfile(dich) and os.path.getsize(dich) > 0:
+            return dich
+    return None
+
+
+def them_phu_de_tu_ngoai(job, parent=None):
+    """(v7.0, phu luc 1) Them phu de thu cong cho 1 du an khi cot Phu de
+    dang trong (khong tai duoc / khong tim duoc phu de).
+    Mo hop chon file .srt, LUU DUONG DAN file vao job (khong copy file,
+    KHONG ghi de file goc khi import), cap nhat cot Phu de thanh Co +
+    ten file. Tra ve duong dan da chon hoac '' neu huy.
+    Khong doan noi dung phu de."""
+    p = filedialog.askopenfilename(
+        title="Chọn file phụ đề .srt để thêm cho dự án",
+        filetypes=[("Phụ đề SRT", "*.srt"), ("Mọi file", "*.*")])
+    if not p:
+        return ""
+    job["subtitle_file"] = p
+    job["has_subtitle"] = True
+    job["subtitle_status"] = "da_them_tay"
+    if not job.get("subtitle_langs"):
+        job["subtitle_langs"] = []
+    cap_nhat_job_trong_jobs(job)
+    return p
+
+
+# ---------------- dich phu de qua API ----------------
+
+def tao_prompt_dich_phu_de(the_loai, nhan_vat, xung_ho, boi_canh, khoi_srt):
+    """Prompt dich phu de: giu nguyen timestamp + thu tu cau, dich theo
+    boi canh toan bo, dung ngu phap/xung ho/vai ve/gioi tinh, van phong
+    dung boi canh. Tra ve prompt text."""
+    return (
+        "Bạn là dịch giả phụ đề phim. Dịch các câu phụ đề sau sang "
+        "tiếng Việt, đúng bối cảnh toàn bộ, đúng tính cách/cảm xúc/"
+        "tình huống từng câu, nghe tự nhiên như người Việt nói, "
+        "không dịch word-by-word khô cứng.\n"
+        "Thể loại: %s\nNhân vật: %s\nXưng hô/vai vế: %s\n"
+        "Bối cảnh thêm: %s\n"
+        "YÊU CẦU BẮT BUỘC: trả về ĐÚNG định dạng SRT gốc, giữ nguyên "
+        "số thứ tự và timestamp từng câu, chỉ thay phần lời thoại "
+        "bằng tiếng Việt. Không thêm/bớt câu, không giải thích thêm.\n\n"
+        "%s\n" % (the_loai or "(chưa rõ)", nhan_vat or "(chưa rõ)",
+                  xung_ho or "(theo phim)", boi_canh or "(không có)",
+                  khoi_srt))
+
+
+def goi_api_dich(provider, api_key, prompt):
+    """Goi API dich (Gemini mac dinh / GPT / Muse). Key lay tu config,
+    KHONG hardcode, KHONG ghi log key. Tra ve text tra loi.
+    Muse = Anthropic Messages API. Can key that thi bao loi ro."""
+    if not (api_key or "").strip():
+        raise RuntimeError("Chưa nhập API key cho %s (nhập ở tab Xử lý "
+                           "phụ đề, key chỉ lưu local trong config.json)."
+                           % provider)
+    key = api_key.strip()
+    data = json.dumps({"x": 1}).encode()  # placeholder, ghi de ben duoi
+    if provider == "Gemini":
+        url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+               "gemini-2.5-flash:generateContent?key=" +
+               urllib.parse.quote(key))
+        body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
+        req = urllib.request.Request(url, data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            d = json.loads(resp.read().decode("utf-8", "replace"))
+        try:
+            return d["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception:
+            raise RuntimeError("Gemini trả về không đọc được: %s" % str(d)[:300])
+    if provider == "GPT":
+        url = "https://api.openai.com/v1/chat/completions"
+        body = json.dumps({"model": "gpt-4o-mini", "messages": [
+            {"role": "user", "content": prompt}]}).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + key})
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            d = json.loads(resp.read().decode("utf-8", "replace"))
+        try:
+            return d["choices"][0]["message"]["content"]
+        except Exception:
+            raise RuntimeError("GPT trả về không đọc được: %s" % str(d)[:300])
+    # Muse (Anthropic)
+    url = "https://api.anthropic.com/v1/messages"
+    body = json.dumps({"model": "claude-sonnet-4-5",
+                       "max_tokens": 8000,
+                       "messages": [{"role": "user", "content": prompt}]}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers={
+        "Content-Type": "application/json",
+        "x-api-key": key, "anthropic-version": "2023-06-01"})
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        d = json.loads(resp.read().decode("utf-8", "replace"))
+    try:
+        return "".join(p.get("text", "") for p in d.get("content", []))
+    except Exception:
+        raise RuntimeError("Muse trả về không đọc được: %s" % str(d)[:300])
+
+
+def dich_srt_theo_cum(cac_cau, provider, api_key, the_loai, nhan_vat,
+                      xung_ho, boi_canh, tien_trinh_cb=None,
+                      dung_event=None):
+    """Dich SRT theo cum 20 cau, giu timestamp goc. Tra ve list cau da
+    dich (cung chi_so/bat_dau/ket_thuc, text tieng Viet). Neu API tra
+    ve khong parse duoc thanh SRT thi map theo thu tu cau."""
+    ket_qua = []
+    cum = 20
+    for bat_dau in range(0, len(cac_cau), cum):
+        if dung_event is not None and dung_event.is_set():
+            break
+        nhom = cac_cau[bat_dau:bat_dau + cum]
+        khoi = []
+        for c in nhom:
+            khoi.append("%d\n%s --> %s\n%s" % (
+                c.get("chi_so") or 0,
+                dinh_dang_ms_srt(c.get("bat_dau_ms") or 0),
+                dinh_dang_ms_srt(c.get("ket_thuc_ms") or 0),
+                c.get("text") or ""))
+        prompt = tao_prompt_dich_phu_de(the_loai, nhan_vat, xung_ho,
+                                        boi_canh, "\n\n".join(khoi))
+        tra_loi = goi_api_dich(provider, api_key, prompt)
+        da_parse = doc_srt_text(tra_loi)
+        if len(da_parse) == len(nhom):
+            for goc, moi in zip(nhom, da_parse):
+                ket_qua.append({"chi_so": goc.get("chi_so"),
+                                "bat_dau_ms": goc.get("bat_dau_ms"),
+                                "ket_thuc_ms": goc.get("ket_thuc_ms"),
+                                "text": moi.get("text") or goc.get("text")})
+        else:
+            # Fallback: lay tung dong khong phai so/timestamp lam ban dich.
+            dong_dich = [d.strip() for d in tra_loi.splitlines()
+                         if d.strip() and not d.strip().isdigit()
+                         and "-->" not in d]
+            for i, goc in enumerate(nhom):
+                text = dong_dich[i] if i < len(dong_dich) else goc.get("text")
+                ket_qua.append({"chi_so": goc.get("chi_so"),
+                                "bat_dau_ms": goc.get("bat_dau_ms"),
+                                "ket_thuc_ms": goc.get("ket_thuc_ms"),
+                                "text": text})
+        if tien_trinh_cb:
+            tien_trinh_cb(min(100, int(len(ket_qua) * 100 / max(1, len(cac_cau)))))
+    return ket_qua
+
 def luu_file_thong_tin_phim(folder, ten_goc, ten_viet, url, chat_luong=""):
     """(v6.5) Tạo 1 file text trong thư mục của phim, lưu link Bilibili +
     tên phim gốc + tên phim tiếng Việt. Ghi ngay khi bấm TẢI BẰNG IDM nên
@@ -996,6 +1418,2262 @@ def gop_co_tien_trinh(video, audio, out_path, ffmpeg, tien_trinh_cb):
     return out_path
 
 
+
+# ======================================================================
+# PHAN SRT READER v1.4 GOP VAO (ChipChipStudio v7.0)
+# Nguon: SRT-Reader-HoaiMy.py v1.4 (SRT Reader v1.4, gop vao ChipChipStudio).
+# Giu NGUYEN toan bo ham/lop doc SRT + Edge TTS + atempo + tien-trinh
+# (xem audit cuoi file gop / bao cao ban giao). Chi co 2 ngoai le:
+#  (1) Cac ham trung ten voi Chipchipdownload (app_dir, config_path,
+#      doc_config, luu_config, tim_ffmpeg, tim_ffprobe, ...) KHONG
+#      lay ban SRT ma dung 1 ban gop duy nhat o phan Chipchip ben
+#      tren (doc_config/luu_config gop ca 2 bo khoa; tim_ffmpeg gop
+#      ca 2 danh sach duong dan; mac_dinh_thu_muc_luu cua SRT doi
+#      ten thanh mac_dinh_thu_muc_luu_srt).
+#  (2) Luong cap nhat RIENG cua SRT Reader (kiem_tra_cap_nhat,
+#      tai_ban_moi_va_cap_nhat, ten exe rieng, repo rieng cua SRT Reader) DA
+#      BO HAN: ChipChipStudio chi dung DUY NHAT luong cap nhat cua
+#      ChipChip (QuanLy.bam_kiem_tra_cap_nhat, Release latest, asset
+#      Chipchipdownload.exe, capnhat.bat). SRT Reader von la portable,
+#      khi gop vao thi thanh tool setup cai 1 lan, va chi cap nhat
+#      trong tool, khong cai lai.
+# ======================================================================
+
+GIONG_MAY = "Giọng máy (cũ)"  # giong SAPI tieng Viet co san tren may Windows
+
+
+GIONG = {
+    "HoaiMy (nữ)": "vi-VN-HoaiMyNeural",
+    "NamMinh (nam)": "vi-VN-NamMinhNeural",
+    GIONG_MAY: "may",
+}
+
+
+GIONG_MAC_DINH = "HoaiMy (nữ)"
+
+
+MAU_DOC_THU = "Xin chào, đây là giọng đọc thử."
+
+
+DO_DAI_TOI_DA_MOT_LAN = 500  # ky tu; cau dai hon se tach nho
+
+
+_TS_RE = re.compile(
+    r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)"
+)
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _ts_sang_ms(h, m, s, ms):
+    return (int(h) * 3600 + int(m) * 60 + int(s)) * 1000 + int(ms)
+
+
+def _dinh_dang_ms(ms):
+    """ms -> chuoi 'HH:MM:SS,mmm' de hien trong danh sach cau."""
+    ms = int(ms)
+    s, mmm = divmod(ms, 1000)
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    return "%02d:%02d:%02d,%03d" % (h, m, s, mmm)
+
+
+def doc_srt(duong_dan):
+    """Tra ve list dict: {chi_so, bat_dau_ms, ket_thuc_ms, text}."""
+    with open(duong_dan, "r", encoding="utf-8-sig", errors="replace") as f:
+        noi_dung = f.read()
+    noi_dung = noi_dung.replace("\r\n", "\n").replace("\r", "\n")
+    khoi = [k.strip("\n") for k in re.split(r"\n\s*\n", noi_dung) if k.strip()]
+    ket_qua = []
+    chi_so_tu_dong = 0
+    for k in khoi:
+        dong = [d for d in k.split("\n") if d.strip() != ""]
+        if not dong:
+            continue
+        i_ts = None
+        chi_so = None
+        for i, d in enumerate(dong):
+            if _TS_RE.search(d):
+                i_ts = i
+                break
+        if i_ts is None:
+            continue
+        m = _TS_RE.search(dong[i_ts])
+        bat_dau = _ts_sang_ms(m.group(1), m.group(2), m.group(3), m.group(4))
+        ket_thuc = _ts_sang_ms(m.group(5), m.group(6), m.group(7), m.group(8))
+        if i_ts == 1:
+            try:
+                chi_so = int(dong[0].strip())
+            except ValueError:
+                chi_so = None
+        if chi_so is None:
+            chi_so_tu_dong += 1
+            chi_so = chi_so_tu_dong
+        else:
+            chi_so_tu_dong = max(chi_so_tu_dong, chi_so)
+        text = " ".join(dong[i_ts + 1:])
+        text = _TAG_RE.sub("", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            continue
+        ket_qua.append({
+            "chi_so": chi_so,
+            "bat_dau_ms": bat_dau,
+            "ket_thuc_ms": ket_thuc,
+            "text": text,
+        })
+    ket_qua.sort(key=lambda x: x["bat_dau_ms"])
+    return ket_qua
+
+
+def tach_cau_dai(text, gioi_han=DO_DAI_TOI_DA_MOT_LAN):
+    """Tach cau dai thanh nhieu doan ngan de Edge TTS doc on dinh."""
+    if len(text) <= gioi_han:
+        return [text]
+    doan = []
+    tam = ""
+    for cau in re.split(r"(?<=[.!?;:,])\s+", text):
+        if len(tam) + len(cau) + 1 <= gioi_han:
+            tam = (tam + " " + cau).strip()
+        else:
+            if tam:
+                doan.append(tam)
+            if len(cau) > gioi_han:
+                # cat cung theo khoang trang
+                while len(cau) > gioi_han:
+                    cat = cau.rfind(" ", 0, gioi_han)
+                    cat = cat if cat > 0 else gioi_han
+                    doan.append(cau[:cat].strip())
+                    cau = cau[cat:].strip()
+                if cau:
+                    tam = cau
+                else:
+                    tam = ""
+            else:
+                tam = cau
+    if tam:
+        doan.append(tam)
+    return [d for d in doan if d]
+
+
+def _tom_tat_loi(e, gioi_han=160):
+    """Lay dong dau tien cua loi, cat ngan de hien len giao dien (v1.3:
+    KHONG hien toan bo log tho ffmpeg dai, nhay lien tuc - log ffmpeg
+    day du chi ghi vao file, xem _ghi_log_loi_ffmpeg)."""
+    s = str(e).replace("\r", " ").replace("\n", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    if len(s) > gioi_han:
+        s = s[:gioi_han].rstrip() + "..."
+    return s or type(e).__name__
+
+
+def _ghi_log_loi_ffmpeg(thu_muc, noi_dung):
+    """Ghi log loi ffmpeg DAY DU vao file ffmpeg-loi.log trong thu muc ket
+    qua (de chan doan sau), thay vi hien toan bo len man hinh (v1.3)."""
+    try:
+        os.makedirs(thu_muc, exist_ok=True)
+        with open(os.path.join(thu_muc, "ffmpeg-loi.log"), "a",
+                  encoding="utf-8") as f:
+            f.write("\n--- %s ---\n%s\n"
+                    % (time.strftime("%Y-%m-%d %H:%M:%S"), noi_dung))
+    except Exception:
+        pass
+
+
+def kiem_chung_pe(path):
+    """Kiem tra nhanh file vua tai co phai exe Windows that khong
+    (header MZ + chu ky PE), de khong va phai trang loi HTML doi lot file.
+    Tra ve True neu dung dinh dang PE."""
+    try:
+        with open(path, "rb") as f:
+            dau = f.read(64)
+        if len(dau) < 64 or dau[:2] != b"MZ":
+            return False
+        e_lfanew = int.from_bytes(dau[60:64], "little")
+        with open(path, "rb") as f:
+            f.seek(e_lfanew)
+            return f.read(4) == b"PE\x00\x00"
+    except Exception:
+        return False
+
+
+def _dinh_dang_toc_do(he_so):
+    """Hien thi toc do dang he so nhan (giong trang web test): '1.00x',
+    '1.35x', '0.50x'."""
+    return "%.2fx" % float(he_so)
+
+
+def _toc_do_sang_phan_tram(he_so):
+    """Doi he so nhan (1.35x) sang phan tram cho edge-tts/SAPI (+35)."""
+    return int(round((float(he_so) - 1.0) * 100))
+
+
+def _toc_do_sang_edge(he_so):
+    """Doi he so nhan sang chuoi rate edge-tts nhan ('+35%').
+    Edge-tts nhan rate dang '+35%' cho toc do 1.35x."""
+    return "%+d%%" % _toc_do_sang_phan_tram(he_so)
+
+
+def _chuyen_toc_do_cu(gia_tri):
+    """Chuyen toc do tu config cu (v1.0-1.2 luu dang phan tram so nguyen,
+    vd 9 = +9%) sang he so nhan v1.3 (1.09x). Config moi da luu so thuc
+    (vd 1.35) thi giu nguyen."""
+    if isinstance(gia_tri, bool):
+        return 1.0
+    if isinstance(gia_tri, int):
+        # So nguyen -50..50: phan tram cu -> he so nhan.
+        if -50 <= gia_tri <= 50:
+            return round(1.0 + gia_tri / 100.0, 2)
+        return 1.0
+    try:
+        he_so = float(gia_tri)
+    except (TypeError, ValueError):
+        return 1.0
+    return max(0.5, min(2.0, he_so))
+
+
+def _dinh_dang_cao_do(hz):
+    return ("+" if hz >= 0 else "") + str(int(hz)) + "Hz"
+
+
+def _tao_connector(bo_xac_minh):
+    if not bo_xac_minh:
+        return None
+    import aiohttp
+    ctx = ssl._create_unverified_context()
+    return aiohttp.TCPConnector(ssl=ctx)
+
+
+EDGE_ALT_WSS_URL = ("wss://api.msedgeservices.com/tts/cognitiveservices/"
+                    "websocket/v1?Ocp-Apim-Subscription-Key={token}")
+
+
+_dung_may_chu_phu = False  # da chuyen sang may chu phu trong phien nay
+
+
+_khoa_may_chu = threading.Lock()
+
+
+def _lay_proxy_he_thong():
+    """Proxy he thong neu co (bien moi truong https_proxy/HTTPS_PROXY).
+    May nha thuong khong co proxy -> tra None (khong doi hanh vi)."""
+    return (os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY")
+            or os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY"))
+
+
+def _ten_may_chu(url):
+    try:
+        return url.split("/")[2]
+    except Exception:
+        return url
+
+
+def _chuyen_sang_may_chu_phu(log_cb=None):
+    """Doi edge-tts sang may chu phu api.msedgeservices.com cho den het
+    phien (giong FluentVoice Pro 1.6.3). Tra ve True neu vua chuyen,
+    False neu da o may chu phu roi."""
+    global _dung_may_chu_phu
+    import edge_tts.communicate as comm
+    from edge_tts.constants import TRUSTED_CLIENT_TOKEN
+    with _khoa_may_chu:
+        if _dung_may_chu_phu:
+            return False
+        comm.WSS_URL = EDGE_ALT_WSS_URL.format(token=TRUSTED_CLIENT_TOKEN)
+        _dung_may_chu_phu = True
+    if log_cb:
+        log_cb("  -> May chu giong goc tu choi ket noi, chuyen sang may chu "
+               "phu api.msedgeservices.com...")
+    return True
+
+
+def _mo_ta_loi_giong(e):
+    """Phan loai loi doc giong de log ro rang.
+    Tra ve (ma, giai_thich). Ma: '403' | '429' | 'khong-co-audio' |
+    'ssl' | 'mang' | 'khac'."""
+    ten = type(e).__name__
+    s = str(e)
+    status = getattr(e, "status", None)
+    if status == 403 or " 403" in s or s.startswith("403"):
+        return ("403", "Microsoft tu choi ket noi (HTTP 403) - may chu "
+                       "giong goc siet ket noi tu tool ngoai trinh duyet")
+    if status == 429 or " 429" in s or s.startswith("429"):
+        return ("429", "bi gioi han toc do (HTTP 429) - Microsoft chan tam, "
+                       "doi vai giay roi thu lai")
+    if ten == "NoAudioReceived" or "No audio was received" in s:
+        return ("khong-co-audio", "may chu chap nhan ket noi nhung ngat "
+                                   "khong tra audio (Microsoft tu choi ngam)")
+    if la_loi_chung_chi_ssl(e):
+        return ("ssl", "loi chung chi SSL - proxy/phan mem diet virus chan "
+                       "chung chi")
+    if "timeout" in s.lower() or "timed out" in s.lower():
+        return ("mang", "het thoi gian cho - mang cham hoac may chu tre")
+    return ("khac", "%s: %s" % (ten, s))
+
+
+async def _doc_mot_doan(text, voice, toc_do, cao_do, duong_dan_ra,
+                        bo_xac_minh, proxy=None):
+    import edge_tts
+    import edge_tts.communicate as _comm
+    # edge-tts truyen thang ssl=_SSL_CTX (certifi) vao ws_connect, ghi de
+    # context cua connector -> muon bo xac minh that thi phai doi ca
+    # _SSL_CTX cua edge-tts (neu khong, fallback bo xac minh o v1.1 chi
+    # la hinh thuc, WSS van xac minh nhu thuong).
+    try:
+        if bo_xac_minh:
+            _comm._SSL_CTX = ssl._create_unverified_context()
+        else:
+            import certifi
+            _comm._SSL_CTX = ssl.create_default_context(
+                cafile=certifi.where())
+    except Exception:
+        pass
+    comm = edge_tts.Communicate(
+        text, voice,
+        # v1.3: toc_do la he so nhan tren giao dien (1.35x) - doi sang
+        # dang '+35%' truoc khi dua cho edge-tts.
+        rate=_toc_do_sang_edge(toc_do),
+        pitch=_dinh_dang_cao_do(cao_do),
+        connector=_tao_connector(bo_xac_minh),
+        proxy=proxy,
+    )
+    await comm.save(duong_dan_ra)
+
+
+def _doc_mot_doan_co_failover(text, voice, toc_do, cao_do, duong_dan_ra,
+                              log_cb=None):
+    """Doc 1 doan ngan thanh file MP3, co failover may chu giong.
+    Thu tu: may chu goc (SSL xac minh -> bo xac minh) roi may chu phu
+    api.msedgeservices.com (SSL xac minh -> bo xac minh). Gap 429 thi
+    doi 3 giay truoc khi thu lai. Tra ve (thanh_cong, da_dung_bo_xac_minh,
+    thong_bao_loi)."""
+    import time
+    proxy = _lay_proxy_he_thong()
+    if proxy and log_cb:
+        log_cb("  (phat hien proxy he thong, dung proxy de goi giong)")
+    if _dung_may_chu_phu:
+        cac_luot = [("phu", False), ("phu", True)]
+    else:
+        cac_luot = [("goc", False), ("goc", True),
+                    ("phu", False), ("phu", True)]
+    loi_cuoi = ""
+    for i, (may_chu, bo_xac_minh) in enumerate(cac_luot, 1):
+        if may_chu == "phu":
+            _chuyen_sang_may_chu_phu(log_cb)
+            if i == 3:
+                time.sleep(2)  # tranh 429 khi vua doi may chu
+        ten_may = ("may chu goc" if may_chu == "goc"
+                   else "may chu phu")
+        try:
+            asyncio.run(_doc_mot_doan(text, voice, toc_do, cao_do,
+                                      duong_dan_ra, bo_xac_minh, proxy))
+            if os.path.isfile(duong_dan_ra) and os.path.getsize(duong_dan_ra) > 0:
+                if log_cb and may_chu == "phu":
+                    log_cb("  OK qua may chu phu api.msedgeservices.com")
+                return True, bo_xac_minh, ""
+            raise RuntimeError("file am thanh rong (0 byte)")
+        except Exception as e:
+            ma, giai_thich = _mo_ta_loi_giong(e)
+            loi_cuoi = "%s [%s]" % (giai_thich, ma)
+            if log_cb:
+                log_cb("  Thu lan %d/%d (%s, %s) loi [%s]: %s"
+                       % (i, len(cac_luot), ten_may,
+                          "bo xac minh SSL" if bo_xac_minh else "SSL xac minh",
+                          ma, giai_thich))
+            if ma == "429":
+                time.sleep(3)
+            continue
+    return False, False, loi_cuoi
+
+
+def doc_thanh_mp3(text, voice, toc_do, cao_do, duong_dan_ra, log_cb=None):
+    """Doc 1 cau thanh file MP3 (co failover may chu giong, xem
+    _doc_mot_doan_co_failover). toc_do la HE SO NHAN (v1.3: 1.0x mac
+    dinh, 0.5x-2.0x) - doi sang dang '+35%' trong _doc_mot_doan truoc
+    khi dua cho edge-tts. Tra ve (thanh_cong, da_dung_bo_xac_minh,
+    thong_bao_loi). v1.3: doc loi thi XOA file dich (neu co) de khong de
+    lai file MP3 hong (0 byte / doan giua chung) lam hong buoc gop sau."""
+    doan_list = tach_cau_dai(text)
+    if len(doan_list) == 1:
+        ok, bo_xac_minh, loi = _doc_mot_doan_co_failover(
+            text, voice, toc_do, cao_do, duong_dan_ra, log_cb)
+        if not ok:
+            _xoa_file_quiet(duong_dan_ra)
+        return ok, bo_xac_minh, loi
+    # Cau dai: doc tung doan roi noi lai bang pydub
+    import tempfile
+    from pydub import AudioSegment
+    am_thanh = AudioSegment.empty()
+    for j, doan in enumerate(doan_list):
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            tam_path = tmp.name
+        ok, _, loi = doc_thanh_mp3(doan, voice, toc_do, cao_do, tam_path, log_cb)
+        try:
+            if ok:
+                am_thanh += AudioSegment.from_file(tam_path, format="mp3")
+            else:
+                _xoa_file_quiet(duong_dan_ra)
+                return False, False, "doan %d loi: %s" % (j + 1, loi)
+        finally:
+            try:
+                os.remove(tam_path)
+            except OSError:
+                pass
+    am_thanh.export(duong_dan_ra, format="mp3")
+    return True, False, ""
+
+
+def _ps_quote(s):
+    """Nhung chuoi vao chuoi don PowerShell (nhan doi dau ')."""
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def _ps_giong_may(text, toc_do, cao_do, wav_path, dung_ssml):
+    """Tao script PowerShell doc 1 doan bang SAPI (System.Speech).
+    wav_path=None -> phat ra loa; khac None -> ghi ra file WAV.
+    Giong: uu tien giong tieng Viet (vi-*) nu, neu khong co thi lay
+    giong mac dinh cua may. Toc do qua thuoc tinh Rate (-10..10);
+    cao do chi chinh duoc qua SSML prosody (neu dung_ssml)."""
+    from xml.sax.saxutils import escape as xml_escape
+    # v1.3: toc_do la he so nhan (1.35x) - doi sang phan tram (+35) roi
+    # moi doi sang thang Rate -10..10 cua SAPI.
+    phan_tram = _toc_do_sang_phan_tram(toc_do)
+    rate_plain = max(-10, min(10, int(round(phan_tram / 5.0))))
+    ssml = ""
+    if dung_ssml:
+        rate_str = "medium" if phan_tram == 0 else ("%+d%%" % phan_tram)
+        pitch_str = "default" if cao_do == 0 else ("%+dHz" % cao_do)
+        ssml = ('<speak version="1.0" '
+                'xmlns="http://www.w3.org/2001/10/synthesis" '
+                'xml:lang="vi-VN"><prosody rate="%s" pitch="%s">%s'
+                '</prosody></speak>'
+                % (rate_str, pitch_str, xml_escape(text)))
+    wav_ps = "$null" if wav_path is None else _ps_quote(wav_path)
+    dung = "$true" if dung_ssml else "$false"
+    return "\n".join([
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+        "$ErrorActionPreference = 'Stop'",
+        "Add-Type -AssemblyName System.Speech",
+        "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer",
+        "$tatCa = $synth.GetInstalledVoices() | Where-Object { $_.Enabled }",
+        "$vi = @($tatCa | Where-Object { "
+        "$_.VoiceInfo.Culture.Name -like 'vi*' })",
+        "if ($vi.Count -eq 0) { $vi = @($tatCa) }",
+        "if ($vi.Count -eq 0) { Write-Error 'NO_VOICE'; exit 1 }",
+        "$chon = $vi | Where-Object { $_.VoiceInfo.Gender -eq 'Female' } "
+        "| Select-Object -First 1",
+        "if (-not $chon) { $chon = $vi | Select-Object -First 1 }",
+        "$synth.SelectVoice($chon.VoiceInfo.Name)",
+        "Write-Output ('VOICE:' + $chon.VoiceInfo.Name)",
+        "$wav = %s" % wav_ps,
+        "if ($wav) { $synth.SetOutputToWaveFile($wav) }",
+        "$daDoc = $false",
+        "if (%s) {" % dung,
+        "    try {",
+        "        $synth.SpeakSsml(%s)" % _ps_quote(ssml),
+        "        $daDoc = $true",
+        "        Write-Output 'MODE:SSML'",
+        "    } catch {",
+        "        Write-Output ('SSML_FAIL:' + $_.Exception.Message)",
+        "        if ($wav) {",
+        "            $synth.SetOutputToDefaultAudioDevice()",
+        "            Remove-Item -LiteralPath $wav -ErrorAction "
+        "SilentlyContinue",
+        "            $synth.SetOutputToWaveFile($wav)",
+        "        }",
+        "    }",
+        "}",
+        "if (-not $daDoc) {",
+        "    $synth.Rate = %d" % rate_plain,
+        "    $synth.Speak(%s)" % _ps_quote(text),
+        "    Write-Output 'MODE:PLAIN'",
+        "}",
+        "$synth.Dispose()",
+    ])
+
+
+def _chay_giong_may(text, toc_do, cao_do, wav_path, log_cb=None, dung=None):
+    """Chay PowerShell System.Speech doc 1 doan.
+    wav_path=None -> phat ra loa; wav_path=... -> ghi ra file WAV.
+    `dung` (threading.Event, tuy chon): khi duoc dat thi tat tien trinh
+    PowerShell ngay (nut 'Dung' khi nghe thu). Tra ve (thanh_cong,
+    ten_giong, loi)."""
+    if not sys.platform.startswith("win"):
+        return False, "", "giọng máy chỉ dùng được trên Windows"
+    import tempfile
+    dung_ssml = (cao_do != 0)
+    ps = _ps_giong_may(text, toc_do, cao_do, wav_path, dung_ssml)
+    fd, ps_path = tempfile.mkstemp(suffix=".ps1")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8-sig") as f:
+            f.write(ps)
+        try:
+            proc = subprocess.Popen(
+                ["powershell", "-NoProfile", "-NonInteractive",
+                 "-ExecutionPolicy", "Bypass", "-File", ps_path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace")
+        except Exception as e:
+            return False, "", "không chạy được PowerShell: %s" % e
+        # Cho tien trinh xong, vua cho vua kiem tra nut Dung / het gio.
+        bat_dau = time.monotonic()
+        while proc.poll() is None:
+            if dung is not None and dung.is_set():
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                proc.wait()
+                return False, "", "đã dừng nghe thử"
+            if time.monotonic() - bat_dau > 180:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                proc.wait()
+                return False, "", "hết thời gian chờ giọng máy (180s)"
+            time.sleep(0.1)
+        out, err = proc.communicate()
+        out = (out or "") + "\n" + (err or "")
+        ten_giong = ""
+        for dong in out.splitlines():
+            if dong.strip().startswith("VOICE:"):
+                ten_giong = dong.strip()[len("VOICE:"):].strip()
+        if "NO_VOICE" in out or proc.returncode != 0:
+            return False, ten_giong, _tom_tat_loi(
+                out.strip() or "PowerShell báo lỗi (mã %d)" % proc.returncode)
+        if dung_ssml and "MODE:PLAIN" in out and log_cb:
+            log_cb("  (giọng máy không nhận cao độ, đã đọc bằng giọng "
+                   "thường)")
+        return True, ten_giong, ""
+    finally:
+        _xoa_file_quiet(ps_path)
+
+
+def nghe_giong_may(text, toc_do, cao_do, log_cb=None, dung=None):
+    """Doc 1 doan bang giong may ra loa (khong tao file). Tra ve
+    (thanh_cong, loi)."""
+    ok, ten_giong, loi = _chay_giong_may(text, toc_do, cao_do, None, log_cb,
+                                         dung)
+    if ok and log_cb and ten_giong:
+        log_cb("  Giọng máy đang dùng: %s" % ten_giong)
+    return ok, loi
+
+
+def _doc_giong_may_1_doan(text, toc_do, cao_do, duong_dan_ra, log_cb,
+                          ffmpeg):
+    """Doc 1 doan ngan bang giong may ra file WAV tam, chuyen sang MP3."""
+    import tempfile
+    fd, wav_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        ok, ten_giong, loi = _chay_giong_may(text, toc_do, cao_do,
+                                             wav_path, log_cb)
+        if not ok:
+            return False, False, loi
+        if log_cb and ten_giong:
+            log_cb("  Giọng máy đang dùng: %s" % ten_giong)
+        try:
+            r = subprocess.run([ffmpeg, "-y", "-i", wav_path,
+                                duong_dan_ra],
+                               capture_output=True, timeout=120)
+        except Exception as e:
+            return False, False, "lỗi chạy ffmpeg: %s" % e
+        if (r.returncode != 0 or not os.path.isfile(duong_dan_ra)
+                or os.path.getsize(duong_dan_ra) == 0):
+            return False, False, "ffmpeg không chuyển được WAV sang MP3"
+        return True, False, ""
+    finally:
+        _xoa_file_quiet(wav_path)
+
+
+def doc_giong_may(text, toc_do, cao_do, duong_dan_ra, log_cb=None,
+                  ffmpeg=None):
+    """Doc 1 cau bang giong may tren Windows thanh file MP3.
+    Tra ve (thanh_cong, False, thong_bao_loi). Can ffmpeg de chuyen
+    WAV sang MP3."""
+    if not sys.platform.startswith("win"):
+        return False, False, "giọng máy chỉ dùng được trên Windows"
+    if not ffmpeg:
+        return False, False, ("cần ffmpeg để xuất MP3 bằng giọng máy "
+                              "(đặt ffmpeg.exe cạnh tool hoặc thêm vào "
+                              "PATH)")
+    doan_list = tach_cau_dai(text)
+    if len(doan_list) == 1:
+        return _doc_giong_may_1_doan(text, toc_do, cao_do, duong_dan_ra,
+                                     log_cb, ffmpeg)
+    from pydub import AudioSegment
+    am_thanh = AudioSegment.empty()
+    for j, doan in enumerate(doan_list):
+        with tempfile.NamedTemporaryFile(suffix=".mp3",
+                                         delete=False) as tmp:
+            tam_path = tmp.name
+        ok, _, loi = _doc_giong_may_1_doan(doan, toc_do, cao_do, tam_path,
+                                           log_cb, ffmpeg)
+        try:
+            if ok:
+                am_thanh += AudioSegment.from_file(tam_path, format="mp3")
+            else:
+                _xoa_file_quiet(duong_dan_ra)
+                return False, False, "doan %d loi: %s" % (j + 1, loi)
+        finally:
+            _xoa_file_quiet(tam_path)
+    am_thanh.export(duong_dan_ra, format="mp3")
+    return True, False, ""
+
+
+def doc_cau_thanh_mp3(text, voice, toc_do, cao_do, duong_dan_ra,
+                      log_cb=None, ffmpeg=None):
+    """Doc 1 cau thanh file MP3, chon duong giong theo `voice`:
+    'may' -> giong SAPI tren may Windows (PowerShell System.Speech);
+    con lai -> Edge TTS online (HoaiMy/NamMinh).
+    Tra ve (thanh_cong, da_dung_bo_xac_minh, thong_bao_loi)."""
+    if voice == "may":
+        return doc_giong_may(text, toc_do, cao_do, duong_dan_ra, log_cb,
+                             ffmpeg)
+    return doc_thanh_mp3(text, voice, toc_do, cao_do, duong_dan_ra, log_cb)
+
+
+TOC_DO_DOC_TRUNG_BINH_KY_TU_GIAY = 13.5  # toc do doc trung binh tieng
+
+
+DUNG_SAI_TRAN_SLOT_MS = 100  # dung sai khi so thoi luong audio voi
+
+
+def _uoc_luong_thoi_luong_ms(text, toc_do=1.0):
+    """Uoc luong thoi luong doc (ms) tu do dai van ban, khi khong do
+    duoc file audio that. Chi la uoc luong - duong chinh van la do
+    thoi luong that cua file sau khi tao."""
+    ky_tu = len((text or "").strip())
+    if ky_tu == 0:
+        return 0
+    return int(ky_tu / TOC_DO_DOC_TRUNG_BINH_KY_TU_GIAY * 1000
+               / max(0.5, float(toc_do)))
+
+
+def _do_dai_mp3_ms(duong_dan, ffmpeg):
+    """Do thoi luong file MP3 (ms). Uu tien ffprobe (nhanh, chinh xac);
+    neu khong co thi dung pydub. Tra ve None neu khong do duoc
+    (vd: thieu ffmpeg, file loi)."""
+    if not os.path.isfile(duong_dan):
+        return None
+    try:
+        if os.path.getsize(duong_dan) == 0:
+            return None
+    except OSError:
+        return None
+    ffprobe = tim_ffprobe(ffmpeg) if ffmpeg else None
+    if ffprobe:
+        try:
+            r = subprocess.run(
+                [ffprobe, "-v", "error", "-show_entries",
+                 "format=duration", "-of",
+                 "default=noprint_wrappers=1:nokey=1", duong_dan],
+                capture_output=True, text=True, timeout=30)
+            if r.returncode == 0 and r.stdout.strip():
+                return int(float(r.stdout.strip()) * 1000)
+        except Exception:
+            pass
+    try:
+        from pydub import AudioSegment
+        return len(AudioSegment.from_file(duong_dan, format="mp3"))
+    except Exception:
+        return None
+
+
+def _tinh_toc_do_can(slot_ms, do_dai_ms, toc_do_co_ban, toc_do_toi_da):
+    """Tinh toc do thuc te can dung cho 1 cau (he so nhan so voi 1.00x).
+    - slot_ms: do dai slot SRT cua cau (ket_thuc - bat_dau).
+    - do_dai_ms: thoi luong audio da tao o toc_do_co_ban (None neu
+      khong do duoc).
+    Tra ve (toc_do_thuc_te, he_so_atempo, vuot_toc_do_toi_da):
+    - Doc vua slot thi toc_do_thuc = toc_do_co_ban, he_so = 1.0.
+    - Can nhanh hon: he_so = do_dai/slot; toc_do_thuc =
+      toc_do_co_ban * he_so, nhung KHONG vuot toc_do_toi_da (toc do toi
+      da hieu dung it nhat bang toc do co ban - khong the cham lai duoi
+      toc do da doc).
+    - vuot_toc_do_toi_da=True khi can nhanh hon ca toc do toi da (cau
+      do se tran slot du da o toc do toi da)."""
+    try:
+        co_ban = float(toc_do_co_ban)
+    except (TypeError, ValueError):
+        co_ban = 1.0
+    try:
+        toi_da = float(toc_do_toi_da)
+    except (TypeError, ValueError):
+        toi_da = 1.35
+    toi_da = max(toi_da, co_ban)  # khong cham lai duoi toc do co ban
+    if not slot_ms or slot_ms <= 0 or not do_dai_ms or do_dai_ms <= 0:
+        return co_ban, 1.0, False
+    if do_dai_ms <= slot_ms:
+        return co_ban, 1.0, False
+    he_so = do_dai_ms / float(slot_ms)
+    toc_do_thuc = co_ban * he_so
+    if toc_do_thuc > toi_da:
+        return toi_da, toi_da / co_ban, True
+    return toc_do_thuc, he_so, False
+
+
+def _chuoi_atempo(he_so):
+    """Tach he so tang toc thanh chuoi filter atempo cua ffmpeg (moi
+    atempo chi nhan 0.5-2.0). vd: 1.6 -> 'atempo=1.6000';
+    3.2 -> 'atempo=2.0000,atempo=1.6000'."""
+    chuoi = []
+    con = float(he_so)
+    while con > 2.0:
+        chuoi.append("atempo=2.0000")
+        con /= 2.0
+    chuoi.append("atempo=%.4f" % con)
+    return ",".join(chuoi)
+
+
+def _tang_toc_mp3(duong_dan, he_so, ffmpeg):
+    """Tang toc file MP3 tai cho bang ffmpeg atempo (ghi qua file tam
+    roi chep de len file goc). Tra ve True neu xong, False neu loi
+    (khong co ffmpeg, he_so khong hop le, ffmpeg bao loi)."""
+    if not ffmpeg or not he_so or he_so <= 1.0:
+        return False
+    import tempfile
+    fd, tam = tempfile.mkstemp(suffix=".mp3")
+    os.close(fd)
+    try:
+        r = subprocess.run([ffmpeg, "-y", "-i", duong_dan, "-vn",
+                            "-af", _chuoi_atempo(he_so),
+                            "-b:a", "128k", tam],
+                           capture_output=True, timeout=120)
+        if (r.returncode != 0 or not os.path.isfile(tam)
+                or os.path.getsize(tam) == 0):
+            return False
+        shutil.copyfile(tam, duong_dan)
+        return True
+    except Exception:
+        return False
+    finally:
+        _xoa_file_quiet(tam)
+
+
+def _ap_dung_toc_do_tu_dong(duong_dan, cau, toc_do_co_ban, toc_do_toi_da,
+                            tu_dong, ffmpeg, log_cb=None):
+    """Ap dung toc do tu dong theo slot SRT cho 1 cau vua doc xong.
+    Tra ve toc_do_thuc_te (he so nhan) cua cau do.
+    - Tat tu_dong: tra ve toc_do_co_ban, khong lam gi (hanh vi cu v1.3).
+    - Do thoi luong that cua file (ffprobe/pydub); khong do duoc thi
+      uoc luong tu do dai van ban.
+    - Can nhanh hon thi dung ffmpeg atempo tang toc file tai cho.
+    - Khong kip du o toc do toi da (hoac khong tang toc duoc) thi ghi
+      log canh bao 'Câu X đọc hết Ys nhưng slot chỉ có Zs (tràn sang
+      câu sau)'."""
+    try:
+        co_ban = float(toc_do_co_ban)
+    except (TypeError, ValueError):
+        co_ban = 1.0
+    if not tu_dong:
+        return co_ban
+    slot_ms = cau["ket_thuc_ms"] - cau["bat_dau_ms"]
+    if slot_ms <= 0:
+        return co_ban
+    do_dai = _do_dai_mp3_ms(duong_dan, ffmpeg)
+    if do_dai is None:
+        do_dai = _uoc_luong_thoi_luong_ms(cau["text"], co_ban)
+        if log_cb and do_dai > 0:
+            log_cb("  (câu %d: không đo được thời lượng file, ước lượng "
+                   "%.1fs từ độ dài văn bản)" % (cau["chi_so"],
+                                                do_dai / 1000.0))
+    if do_dai <= 0:
+        return co_ban
+    toc_do_thuc, he_so, vuot_max = _tinh_toc_do_can(
+        slot_ms, do_dai, co_ban, toc_do_toi_da)
+    if he_so > 1.005:
+        if ffmpeg and _tang_toc_mp3(duong_dan, he_so, ffmpeg):
+            if log_cb:
+                log_cb("  Câu %d: đọc %.1fs, slot %.1fs -> tăng tốc lên "
+                       "%.2fx" % (cau["chi_so"], do_dai / 1000.0,
+                                  slot_ms / 1000.0, toc_do_thuc))
+        else:
+            if log_cb:
+                log_cb("  Câu %d: cần %.2fx mới kịp slot nhưng không tăng "
+                       "tốc được (thiếu ffmpeg) - giữ tốc độ %.2fx"
+                       % (cau["chi_so"], toc_do_thuc, co_ban))
+            toc_do_thuc = co_ban
+            he_so = 1.0
+    # Kiem tra tran slot sau khi tang toc (do lai thoi luong that neu
+    # vua tang toc; neu khong thi dung so da do/uoc luong).
+    do_dai_cuoi = do_dai
+    if he_so > 1.005:
+        do_dai_moi = _do_dai_mp3_ms(duong_dan, ffmpeg)
+        do_dai_cuoi = (do_dai_moi if do_dai_moi is not None
+                       else int(do_dai / he_so))
+    if do_dai_cuoi > slot_ms + DUNG_SAI_TRAN_SLOT_MS:
+        if log_cb:
+            log_cb("  Cảnh báo: Câu %d đọc hết %.1fs nhưng slot chỉ có "
+                   "%.1fs (tràn sang câu sau)"
+                   % (cau["chi_so"], do_dai_cuoi / 1000.0,
+                      slot_ms / 1000.0))
+    return toc_do_thuc
+
+
+def _phat_mp3(path, dung=None):
+    """Phat 1 file MP3 ra loa NGAY trong tool (dung cho nut 'Nghe thu
+    giong'). Windows: dung winmm (MCI) co san - phat khong cho roi
+    tu cho xong, KHONG mo trinh phat ngoai, KHONG luu file. `dung`
+    (threading.Event, tuy chon): khi duoc dat thi dung phat ngay (nut
+    'Dung' khi nghe thu). Tra ve (thanh_cong, loi)."""
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            winmm = ctypes.windll.winmm
+            winmm.mciSendStringW("close tts_nghe", None, 0, 0)
+            r = winmm.mciSendStringW(
+                'open "%s" alias tts_nghe' % path, None, 0, 0)
+            if r != 0:
+                return False, "không mở được file âm thanh để phát (mã %d)" % r
+            r = winmm.mciSendStringW("play tts_nghe", None, 0, 0)
+            if r != 0:
+                winmm.mciSendStringW("close tts_nghe", None, 0, 0)
+                return False, "không phát được audio (mã %d)" % r
+            # Cho phat xong hoac bi dung (poll trang thai MCI).
+            buf = ctypes.create_unicode_buffer(64)
+            bat_dau = time.monotonic()
+            da_phat = False
+            while True:
+                if dung is not None and dung.is_set():
+                    winmm.mciSendStringW("stop tts_nghe", None, 0, 0)
+                    winmm.mciSendStringW("close tts_nghe", None, 0, 0)
+                    return False, "đã dừng nghe thử"
+                winmm.mciSendStringW("status tts_nghe mode", buf, 64, 0)
+                che_do = buf.value.strip().lower()
+                if che_do == "playing":
+                    da_phat = True
+                elif da_phat:
+                    break
+                elif time.monotonic() - bat_dau > 2:
+                    # Khong thay phat (file rat ngan hoac loi) - thoat.
+                    break
+                time.sleep(0.1)
+            winmm.mciSendStringW("close tts_nghe", None, 0, 0)
+            return True, ""
+        except Exception as e:
+            return False, "không phát được audio: %s" % e
+    # Khong phai Windows (chi dung khi test): thu ffplay neu co.
+    try:
+        proc = subprocess.Popen(["ffplay", "-nodisp", "-autoexit",
+                                 "-loglevel", "error", path],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        while proc.poll() is None:
+            if dung is not None and dung.is_set():
+                proc.kill()
+                proc.wait()
+                return False, "đã dừng nghe thử"
+            time.sleep(0.1)
+        return True, ""
+    except Exception as e:
+        return False, "không phát được audio trên hệ này: %s" % e
+
+
+class GopDan:
+    """Gop dan (merge incremental) cho che do 'Gop 1 file long tieng'
+    (v1.3): moi cau doc xong la ghep NGAY vao file WAV tam, dung moc
+    thoi gian SRT cua no (ghi PCM truc tiep vao dung vi tri, cho chua
+    toi thi de lang). Khong doi den cuoi moi gop 1 lan nhu truoc.
+    Loi ich: huy giua chung hay loi giua chung thi file tam van giu
+    cac cau da xong (khong mat trang); 1 cau loi khong lam hong ca
+    file gop (chi de lang o slot cua no roi di tiep); mo file tam ra
+    nghe thu duoc ngay ca khi chua chay xong. Xong thi chuyen WAV tam
+    -> MP3 1 lan bang ffmpeg, roi xoa file tam.
+    Vi sao phai doc tung cau rieng roi moi gop: API giong Microsoft
+    (edge-tts) chi nhan 1 doan van moi lan goi - khong goi 1 lan cho
+    ca 100 cau duoc - nen tool doc tung cau rieng roi ghep lai dung
+    moc thoi gian SRT thanh 1 file long tieng duy nhat."""
+
+    def __init__(self, duong_dan_wav, duong_dan_mp3, tong_ms=0, log_cb=None):
+        self.wav = duong_dan_wav
+        self.mp3 = duong_dan_mp3
+        # tong_ms: moc ket thuc cua cau cuoi trong SRT - file gop phai
+        # dai du den moc nay (du cau cuoi doc ngan hon slot cua no).
+        self.tong_ms = tong_ms
+        self.log_cb = log_cb
+        self.frame_rate = None
+        self.channels = None
+        self.sample_width = 2
+        self.block_align = None
+        self.so_cau = 0       # so cau da ghep vao file tam
+        self.bo_qua = 0       # so cau loi da bo qua (khong co audio)
+        self.tran_slot = 0    # so cau doc dai hon slot cua no
+        self.da_tao = False   # file WAV tam da duoc tao (co cau dau tien)
+
+    def _ghi_header_vao(self, f, data_size):
+        """Ghi (lai) header WAV 44 byte voi data_size hien tai (f dang mo)."""
+        import struct
+        byte_rate = self.frame_rate * self.block_align
+        header = struct.pack(
+            "<4sI4s4sIHHIIHH4sI",
+            b"RIFF", 36 + data_size, b"WAVE", b"fmt ", 16, 1,
+            self.channels, self.frame_rate, byte_rate, self.block_align,
+            self.sample_width * 8, b"data", data_size)
+        f.seek(0)
+        f.write(header)
+
+    def _khoi_tao(self, am_thanh):
+        """Tao file WAV tam tu audio cua cau dau tien (lay thong so
+        frame_rate/channels/sample_width tu no). File duoc tao du dai
+        tong_ms ngay tu dau (phan chua toi la lang) de mo ra nghe thu
+        duoc ngay ca khi chua chay xong."""
+        self.frame_rate = am_thanh.frame_rate
+        self.channels = am_thanh.channels
+        self.sample_width = am_thanh.sample_width
+        self.block_align = self.channels * self.sample_width
+        data_size = 0
+        if self.tong_ms > 0:
+            data_size = (self.tong_ms * self.frame_rate // 1000
+                         * self.block_align)
+        with open(self.wav, "wb") as f:
+            f.write(b"\x00" * 44)
+            if data_size > 0:
+                # Mo rong file (sparse, khong ghi that) cho du tong_ms.
+                f.truncate(44 + data_size)
+                self._ghi_header_vao(f, data_size)
+        self.da_tao = True
+
+    def them_cau(self, cau, duong_dan_mp3_cau):
+        """Ghep 1 cau vua doc xong vao file WAV tam, dung moc thoi gian
+        SRT cua no. Cau nao khong co audio (thieu file, file rong, file
+        loi khong giai ma duoc) thi BO QUA - cho cua no giu nguyen
+        khoang lang - cac cau khac van ghep binh thuong. Tra ve True
+        neu ghep duoc, False neu bo qua."""
+        try:
+            from pydub import AudioSegment
+            am = AudioSegment.from_file(duong_dan_mp3_cau, format="mp3")
+        except Exception:
+            if self.log_cb:
+                self.log_cb("  Đã bỏ qua câu %d (file audio lỗi, không đọc "
+                            "được)" % cau["chi_so"])
+            self.bo_qua += 1
+            return False
+        if len(am) == 0:
+            if self.log_cb:
+                self.log_cb("  Đã bỏ qua câu %d (file audio rỗng, không có "
+                            "audio)" % cau["chi_so"])
+            self.bo_qua += 1
+            return False
+        if not self.da_tao:
+            self._khoi_tao(am)
+        am = (am.set_frame_rate(self.frame_rate)
+                .set_channels(self.channels)
+                .set_sample_width(self.sample_width))
+        dai = len(am)
+        cho_trong = cau["ket_thuc_ms"] - cau["bat_dau_ms"]
+        # v1.4: dung sai 100ms (padding MP3) - tran it hon thi khong
+        # dem la tran slot.
+        if dai > cho_trong + DUNG_SAI_TRAN_SLOT_MS:
+            self.tran_slot += 1
+            if self.log_cb:
+                self.log_cb("  Canh bao: cau %d doc het %.1fs nhung slot "
+                            "chi co %.1fs (phan tran se bi cat khi cau sau "
+                            "bat dau)" % (cau["chi_so"], dai / 1000.0,
+                                         cho_trong / 1000.0))
+        vi_tri = 44 + (cau["bat_dau_ms"] * self.frame_rate // 1000) \
+            * self.block_align
+        du_lieu = am.raw_data
+        with open(self.wav, "r+b") as f:
+            f.seek(vi_tri)
+            f.write(du_lieu)
+            f.seek(0, 2)
+            data_size = f.tell() - 44
+            self._ghi_header_vao(f, data_size)
+        self.so_cau += 1
+        return True
+
+    def do_dai_ms(self):
+        """Do dai hien tai cua file WAV tam (ms)."""
+        if not self.da_tao or not os.path.isfile(self.wav):
+            return 0
+        data_size = os.path.getsize(self.wav) - 44
+        if data_size <= 0 or not self.frame_rate or not self.block_align:
+            return 0
+        return int(data_size * 1000 / (self.frame_rate * self.block_align))
+
+    def hoan_tat(self, ffmpeg):
+        """Chuyen WAV tam -> MP3 dich, xoa file WAV tam. Tra ve
+        (thanh_cong, do_dai_ms)."""
+        if not self.da_tao or self.so_cau == 0:
+            return False, 0
+        # Dam bao file dai du tong_ms (phong khi file bi ngan hon do
+        # cau cuoi doc ngan hon slot cua no).
+        if self.tong_ms > 0:
+            can_bytes = (self.tong_ms * self.frame_rate // 1000
+                         * self.block_align)
+            if os.path.getsize(self.wav) - 44 < can_bytes:
+                with open(self.wav, "r+b") as f:
+                    f.truncate(44 + can_bytes)
+                    self._ghi_header_vao(f, can_bytes)
+        tong_ms = self.do_dai_ms()
+        try:
+            r = subprocess.run([ffmpeg, "-y", "-i", self.wav,
+                                "-b:a", "128k", self.mp3],
+                               capture_output=True, timeout=600)
+        except Exception:
+            return False, 0
+        if (r.returncode != 0 or not os.path.isfile(self.mp3)
+                or os.path.getsize(self.mp3) == 0):
+            return False, 0
+        _xoa_file_quiet(self.wav)
+        return True, tong_ms
+
+
+TEN_FILE_TIEN_TRINH = "tien-trinh.json"
+
+
+def _luu_tien_trinh(thu_muc, du_lieu):
+    """Ghi tien trinh xuat dang do vao thu_muc/tien-trinh.json."""
+    try:
+        os.makedirs(thu_muc, exist_ok=True)
+        with open(os.path.join(thu_muc, TEN_FILE_TIEN_TRINH), "w",
+                  encoding="utf-8") as f:
+            json.dump(du_lieu, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def _doc_tien_trinh(thu_muc):
+    """Doc tien-trinh.json trong thu muc (tra ve dict hoac None)."""
+    try:
+        with open(os.path.join(thu_muc, TEN_FILE_TIEN_TRINH), "r",
+                  encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _xoa_tien_trinh(thu_muc):
+    """Xoa file tien trinh (khi xuat xong 100%)."""
+    _xoa_file_quiet(os.path.join(thu_muc, TEN_FILE_TIEN_TRINH))
+
+
+def _thu_muc_co_ket_qua(thu_muc):
+    """Thu muc da co ket qua xuat nao chua (file MP3 gop, file cau rieng,
+    hay file tien trinh)? Dung de biet co can tao thu muc moi khi
+    'Sub lai tu dau' hay khong."""
+    if not os.path.isdir(thu_muc):
+        return False
+    if os.path.isfile(os.path.join(thu_muc, TEN_FILE_TIEN_TRINH)):
+        return True
+    try:
+        for ten in os.listdir(thu_muc):
+            if ten.lower().endswith(".mp3"):
+                return True
+    except OSError:
+        return False
+    tc = os.path.join(thu_muc, "tung-cau")
+    if os.path.isdir(tc):
+        try:
+            for ten in os.listdir(tc):
+                if ten.lower().endswith(".mp3"):
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def _thu_muc_xuat_moi(thu_muc_goc, ten_goc):
+    """Thu muc xuat cho lan sub moi. Neu thu muc mac dinh da co ket qua
+    (file MP3 cu / tien trinh cu) thi dung ten moi 'ten (1)', 'ten (2)'...
+    de KHONG ghi de file cu (khoi mat cong da sub)."""
+    base = os.path.join(thu_muc_goc, ten_goc)
+    if not _thu_muc_co_ket_qua(base):
+        return base
+    n = 1
+    while True:
+        cand = os.path.join(thu_muc_goc, "%s (%d)" % (ten_goc, n))
+        if not _thu_muc_co_ket_qua(cand):
+            return cand
+        n += 1
+
+
+class CuaSoDocPhuDe(tk.Toplevel):
+    def __init__(self, quan_ly, srt_path=None, job=None):
+        super().__init__(quan_ly)
+        self.quan_ly = quan_ly
+        self.job = job or {}
+        self._srt_path_khoi_dong = srt_path
+        self.title("ChipChipStudio - Doc phu de (HoaiMy) v1.4")
+        self.geometry("920x640")
+        self.resizable(True, True)
+        self.cfg = doc_config()
+        self.hang_doi = queue.Queue()
+        self.dang_chay = False
+        self._yeu_cau_huy = threading.Event()  # co huy: worker kiem tra
+        # giua cac cau, dung sau khi cau dang doc xong (khong ngat giua
+        # cau, khong treo giao dien).
+        # v1.3: tien trinh dang do de nut "Tiep tuc" dung (None neu khong
+        # co); thu muc xuat dang dung cho file SRT da nap (mac dinh
+        # <thu muc luu>/<ten file SRT>, doi khi "Sub lai tu dau" tao
+        # thu muc moi).
+        self.tien_trinh = None
+        self.thu_muc_xuat = None
+        self.cac_cau = []  # v1.3: danh sach cau SRT da nap (nut Nghe thu)
+        # v1.3: trang thai nghe thu giong (nut PLAY phat ra loa).
+        self.dang_nghe = False
+        self._dung_nghe = threading.Event()  # nut Dung dat co nay
+        self._dung_ui()
+        self.protocol("WM_DELETE_WINDOW", self._dong_cua_so_doc)
+        if self._srt_path_khoi_dong and os.path.isfile(self._srt_path_khoi_dong):
+            self.e_srt.delete(0, "end")
+            self.e_srt.insert(0, self._srt_path_khoi_dong)
+            self._nap_danh_sach_cau(self._srt_path_khoi_dong)
+        self.after(200, self._xu_ly_hang_doi)
+
+    def _dong_cua_so_doc(self):
+        # Dong tab khong huy luong doc dang chay: dat co huy, worker se
+        # dung sau cau hien tai, luu tien-trinh.json roi moi thoat.
+        # (v7.0) Chay ngam: tien trinh da luu, mo lai tab bam Tiep tuc.
+        try:
+            self._yeu_cau_huy.set()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+    def _mo_cap_nhat_chipchip(self):
+        # (v7.0) Khong con updater rieng cua SRT Reader: dung duy nhat
+        # luong cap nhat cua ChipChip (QuanLy.bam_kiem_tra_cap_nhat).
+        try:
+            if self.quan_ly is not None:
+                self.quan_ly.bam_kiem_tra_cap_nhat()
+        except Exception:
+            pass
+
+    # ----- giao dien -----
+    def _dung_ui(self):
+        pad = {"padx": 8, "pady": 4}
+        f = tk.Frame(self)
+        f.pack(fill="x", **pad)
+
+        tk.Label(f, text="File SRT:").grid(row=0, column=0, sticky="w")
+        self.e_srt = tk.Entry(f, width=62)
+        self.e_srt.grid(row=0, column=1, sticky="we")
+        self.btn_chon_srt = tk.Button(f, text="Chọn...",
+                                      command=self._chon_srt)
+        self.btn_chon_srt.grid(row=0, column=2)
+        f.columnconfigure(1, weight=1)
+
+        tk.Label(f, text="Thư mục lưu:").grid(row=1, column=0, sticky="w")
+        self.e_luu = tk.Entry(f, width=62)
+        self.e_luu.grid(row=1, column=1, sticky="we")
+        self.e_luu.insert(0, self.cfg.get("thu_muc_luu", ""))
+        self.btn_chon_luu = tk.Button(f, text="Chọn...",
+                                      command=self._chon_thu_muc)
+        self.btn_chon_luu.grid(row=1, column=2)
+
+        f2 = tk.Frame(self)
+        f2.pack(fill="x", **pad)
+        tk.Label(f2, text="Giọng đọc:").grid(row=0, column=0, sticky="w")
+        self.cb_giong = ttk.Combobox(f2, values=list(GIONG.keys()),
+                                     state="readonly", width=22)
+        self.cb_giong.set(self.cfg.get("giong", GIONG_MAC_DINH))
+        self.cb_giong.grid(row=0, column=1, sticky="w", padx=4)
+        # Doi giong thi tien trinh cu khong con hop le -> danh gia lai
+        # nut "Tiep tuc" (v1.3).
+        self.cb_giong.bind("<<ComboboxSelected>>",
+                           lambda e: self._cap_nhat_nut_tiep_tuc())
+
+        # v1.3: toc do dang HE SO NHAN giong trang web test (0.5x-2.0x,
+        # buoc 0.01 - 1.35x chinh duoc, gia tri config cu nhu 1.09x
+        # cung giu nguyen duoc), mac dinh 1.00x.
+        tk.Label(f2, text="Tốc độ:").grid(row=1, column=0, sticky="w")
+        self.sl_toc_do = tk.Scale(f2, from_=0.5, to=2.0, resolution=0.01,
+                                  orient="horizontal", length=220)
+        self.sl_toc_do.set(_chuyen_toc_do_cu(self.cfg.get("toc_do", 1.0)))
+        self.sl_toc_do.grid(row=1, column=1, sticky="w", padx=4)
+        self.lb_toc_do = tk.Label(f2, text="1.00x")
+        self.lb_toc_do.grid(row=1, column=2, sticky="w")
+        self.sl_toc_do.configure(command=self._doi_toc_do)
+
+        # v1.4 - Toc do tu dong theo tung cau (theo iContent): cau dai
+        # doc nhanh hon moi kip slot, cau ngan doc dung nhip. Bat thi
+        # moi cau tu tang toc toi da den "Toc do toi da" (mac dinh
+        # 1.35x); tat thi moi cau doc dung toc do co ban (hanh vi cu
+        # v1.3).
+        self.var_tu_dong_toc_do = tk.BooleanVar(
+            value=bool(self.cfg.get("tu_dong_toc_do", True)))
+        self.cb_tu_dong = tk.Checkbutton(
+            f2, text="Tự động chỉnh tốc độ từng câu",
+            variable=self.var_tu_dong_toc_do,
+            command=self._doi_tu_dong_toc_do)
+        self.cb_tu_dong.grid(row=2, column=1, sticky="w", padx=4)
+        tk.Label(f2, text="Tốc độ tối đa:").grid(row=3, column=0,
+                                                 sticky="w")
+        self.sl_toc_do_toi_da = tk.Scale(
+            f2, from_=1.0, to=2.0, resolution=0.01, orient="horizontal",
+            length=220)
+        self.sl_toc_do_toi_da.set(
+            max(1.0, min(2.0, float(self.cfg.get("toc_do_toi_da", 1.35)))))
+        self.sl_toc_do_toi_da.grid(row=3, column=1, sticky="w", padx=4)
+        self.lb_toc_do_toi_da = tk.Label(f2, text="1.35x")
+        self.lb_toc_do_toi_da.grid(row=3, column=2, sticky="w")
+        self.sl_toc_do_toi_da.configure(command=self._doi_toc_do_toi_da)
+        if not self.var_tu_dong_toc_do.get():
+            self.sl_toc_do_toi_da.configure(state="disabled")
+
+        tk.Label(f2, text="Cao độ:").grid(row=4, column=0, sticky="w")
+        self.sl_cao_do = tk.Scale(f2, from_=-20, to=20, orient="horizontal",
+                                  length=220)
+        self.sl_cao_do.set(int(self.cfg.get("cao_do", 0)))
+        self.sl_cao_do.grid(row=4, column=1, sticky="w", padx=4)
+        self.lb_cao_do = tk.Label(f2, text="+0Hz")
+        self.lb_cao_do.grid(row=4, column=2, sticky="w")
+        self.sl_cao_do.configure(command=self._doi_cao_do)
+        # v1.3 - Nghe thu giong: go 1 doan van ngan vao o nay (de trong
+        # thi nghe cau dang chon trong danh sach), bam nut PLAY la doc
+        # va PHAT TIENG RA LOA NGAY trong tool (khong tao file MP3,
+        # khong mo trinh phat ngoai). Nut Dung de dung giua chung.
+        tk.Label(f2, text="Nghe thử:").grid(row=5, column=0, sticky="w")
+        self.e_nghe_thu = tk.Entry(f2, width=30)
+        self.e_nghe_thu.grid(row=5, column=1, sticky="w", padx=4)
+        self.btn_nghe_thu = tk.Button(f2, text="▶ Nghe thử",
+                                      command=self.bam_nghe_thu)
+        self.btn_nghe_thu.grid(row=5, column=2, sticky="w", padx=2)
+        self.btn_dung_nghe = tk.Button(f2, text="Dừng",
+                                       command=self._dung_nghe_thu,
+                                       state="disabled")
+        self.btn_dung_nghe.grid(row=5, column=3, sticky="w", padx=2)
+        self.lb_toc_do.configure(text=_dinh_dang_toc_do(self.sl_toc_do.get()))
+        self.lb_toc_do_toi_da.configure(
+            text=_dinh_dang_toc_do(self.sl_toc_do_toi_da.get()))
+        self.lb_cao_do.configure(text=_dinh_dang_cao_do(self.sl_cao_do.get()))
+
+        f3 = tk.Frame(self)
+        f3.pack(fill="x", **pad)
+        tk.Label(f3, text="Đầu ra:").grid(row=0, column=0, sticky="w")
+        self.che_do = tk.StringVar(value=self.cfg.get("che_do", "gop"))
+        tk.Radiobutton(f3, text="Gộp 1 file lồng tiếng (MP3)",
+                       variable=self.che_do, value="gop",
+                       command=self._cap_nhat_nut_tiep_tuc).grid(
+                           row=0, column=1, sticky="w")
+        tk.Radiobutton(f3, text="Từng câu riêng (MP3)",
+                       variable=self.che_do, value="rieng",
+                       command=self._cap_nhat_nut_tiep_tuc).grid(
+                           row=0, column=2, sticky="w")
+        tk.Radiobutton(f3, text="Cả hai",
+                       variable=self.che_do, value="ca_hai",
+                       command=self._cap_nhat_nut_tiep_tuc).grid(
+                           row=0, column=3, sticky="w")
+
+        # Danh sach cau trong file SRT: hien ngay khi chon file, cap nhat
+        # trang thai tung cau trong luc xu ly (Cho/Dang doc/Xong/Loi).
+        f_ds = tk.Frame(self)
+        f_ds.pack(fill="both", expand=True, **pad)
+        self.lb_so_cau = tk.Label(f_ds, text="Chưa chọn file SRT.",
+                                  anchor="w")
+        self.lb_so_cau.pack(fill="x")
+        cot = ("stt", "bat_dau", "ket_thuc", "noi_dung", "trang_thai")
+        self.tree_cau = ttk.Treeview(f_ds, columns=cot, show="headings",
+                                     height=6)
+        self.tree_cau.heading("stt", text="#")
+        self.tree_cau.heading("bat_dau", text="Bắt đầu")
+        self.tree_cau.heading("ket_thuc", text="Kết thúc")
+        self.tree_cau.heading("noi_dung", text="Nội dung")
+        self.tree_cau.heading("trang_thai", text="Trạng thái")
+        self.tree_cau.column("stt", width=40, anchor="center")
+        self.tree_cau.column("bat_dau", width=95, anchor="center")
+        self.tree_cau.column("ket_thuc", width=95, anchor="center")
+        self.tree_cau.column("noi_dung", width=300)
+        self.tree_cau.column("trang_thai", width=130)
+        sb_tree = ttk.Scrollbar(f_ds, orient="vertical",
+                                command=self.tree_cau.yview)
+        self.tree_cau.configure(yscrollcommand=sb_tree.set)
+        self.tree_cau.pack(side="left", fill="both", expand=True)
+        sb_tree.pack(side="left", fill="y")
+        self._tree_ids = {}
+        self.thu_muc_ket_qua = None
+        self.file_gop = None
+
+        f4 = tk.Frame(self)
+        f4.pack(fill="x", **pad)
+        # Nut chinh: xuat MP3 long tieng (nut to, chu dam).
+        self.btn_bat_dau = tk.Button(
+            f4, text="XUẤT MP3 LỒNG TIẾNG", command=self._bat_dau,
+            font=("TkDefaultFont", 11, "bold"), padx=10, pady=4)
+        self.btn_bat_dau.pack(side="left", padx=4)
+        # v1.3 - nut "Tiep tuc": chi sang khi co tien trinh dang do da luu
+        # (da xong den cau nao, file MP3 nao); bam thi doc tiep tu cau
+        # chua xong va noi vao file cu, khong doc lai cau da xong.
+        self.btn_tiep_tuc = tk.Button(
+            f4, text="Tiếp tục", command=self._bat_dau_tiep_tuc,
+            state="disabled", padx=10, pady=4)
+        self.btn_tiep_tuc.pack(side="left", padx=4)
+        # v1.3 - nut "Sub lai tu dau": doc lai tu cau 1, tao file MP3 moi
+        # (thu muc moi ten (1), (2)... neu file cu da co, khong ghi de).
+        self.btn_sub_lai = tk.Button(
+            f4, text="Sub lại từ đầu", command=self._bat_dau_sub_lai,
+            state="disabled", padx=10, pady=4)
+        self.btn_sub_lai.pack(side="left", padx=4)
+        # Nut Huy: chi bat khi dang chay, bam la dung sau cau hien tai.
+        self.btn_huy = tk.Button(f4, text="Hủy", command=self._bam_huy,
+                                 state="disabled", padx=10, pady=4)
+        self.btn_huy.pack(side="left", padx=4)
+        self.btn_kiem_tra = tk.Button(
+            f4, text="Kiểm tra kết nối giọng",
+            command=self._kiem_tra_giong)
+        self.btn_kiem_tra.pack(side="left", padx=4)
+        self.btn_cap_nhat = tk.Button(
+            f4, text="Kiểm tra cập nhật (ChipChip)",
+            command=self._mo_cap_nhat_chipchip)
+        self.btn_cap_nhat.pack(side="left", padx=4)
+        tk.Button(f4, text="Mở thư mục kết quả",
+                  command=self._mo_thu_muc_ket_qua).pack(side="left", padx=4)
+
+        self.lb_tien_trinh = tk.Label(self, text="Chưa chạy.")
+        self.lb_tien_trinh.pack(fill="x", padx=8)
+        self.thanh_tien_trinh = ttk.Progressbar(self, orient="horizontal",
+                                                mode="determinate")
+        self.thanh_tien_trinh.pack(fill="x", padx=8, pady=4)
+        # Dong ket qua sau khi xuat xong: duong dan + do dai file MP3.
+        self.lb_ket_qua = tk.Label(self, text="", anchor="w", wraplength=680,
+                                   justify="left", fg="green")
+        self.lb_ket_qua.pack(fill="x", padx=8)
+
+        tk.Label(self, text="Nhật ký:").pack(anchor="w", padx=8)
+        self.txt_log = tk.Text(self, height=16, wrap="word")
+        self.txt_log.pack(fill="both", expand=True, padx=8, pady=4)
+        sb = tk.Scrollbar(self.txt_log, command=self.txt_log.yview)
+        self.txt_log.configure(yscrollcommand=sb.set)
+
+    # ----- doi toc do / cao do (v1.3: doi cai dat thi tien trinh cu co
+    # the khong con hop le -> danh gia lai nut "Tiep tuc") -----
+    def _doi_toc_do(self, v):
+        # v1.3: toc do la he so nhan (1.35x) - hien thi '1.35x'.
+        self.lb_toc_do.configure(text=_dinh_dang_toc_do(float(v)))
+        self._cap_nhat_nut_tiep_tuc()
+
+    def _doi_tu_dong_toc_do(self):
+        # v1.4: bat/tat tu dong toc do - thanh Toc do toi da chi co
+        # nghia khi bat (tat thi mo di). Doi cai dat thi tien trinh cu
+        # co the khong con hop le -> danh gia lai nut "Tiep tuc".
+        if self.var_tu_dong_toc_do.get():
+            self.sl_toc_do_toi_da.configure(state="normal")
+        else:
+            self.sl_toc_do_toi_da.configure(state="disabled")
+        self._cap_nhat_nut_tiep_tuc()
+
+    def _doi_toc_do_toi_da(self, v):
+        # v1.4: toc do toi da la he so nhan (1.35x) - hien thi '1.35x'.
+        self.lb_toc_do_toi_da.configure(text=_dinh_dang_toc_do(float(v)))
+        self._cap_nhat_nut_tiep_tuc()
+
+    def _doi_cao_do(self, v):
+        self.lb_cao_do.configure(text=_dinh_dang_cao_do(int(float(v))))
+        self._cap_nhat_nut_tiep_tuc()
+
+    # ----- khoa / mo nut khi dang chay (v1.3) -----
+    def _khoa_nut_khi_chay(self, cho_huy=True):
+        """Vo hieu hoa cac nut hanh dong trong luc dang xuat (hoac dang
+        kiem tra giong): nut Kiem tra ket noi giong, Kiem tra cap nhat,
+        2 nut Chon... file/thu muc, nut Tiep tuc, nut Sub lai tu dau va
+        nut XUAT deu mo di - chi de nut Huy sang (neu cho_huy). Tranh
+        truong hop bam kiem tra cung luc voi dang xuat gay xung dot
+        (ca hai cung goi giong)."""
+        for b in (self.btn_chon_srt, self.btn_chon_luu, self.btn_kiem_tra,
+                  self.btn_cap_nhat, self.btn_tiep_tuc, self.btn_sub_lai,
+                  self.btn_bat_dau, self.btn_nghe_thu):
+            b.configure(state="disabled")
+        self.btn_dung_nghe.configure(state="disabled")
+        self.btn_huy.configure(state="normal" if cho_huy else "disabled")
+
+    def _mo_khoa_nut(self):
+        """Bat lai cac nut sau khi xuat/kiem tra xong (hoac da huy).
+        Nut Tiep tuc / Sub lai tu dau thi danh gia lai theo tien trinh
+        da luu (co the vua duoc luu khi huy)."""
+        for b in (self.btn_chon_srt, self.btn_chon_luu, self.btn_kiem_tra,
+                  self.btn_cap_nhat, self.btn_bat_dau, self.btn_nghe_thu):
+            b.configure(state="normal")
+        self.btn_dung_nghe.configure(state="disabled")
+        self.btn_huy.configure(state="disabled")
+        self._cap_nhat_nut_tiep_tuc()
+
+    # ----- nut "Tiep tuc" / "Sub lai tu dau" (v1.3) -----
+    def _cap_nhat_nut_tiep_tuc(self):
+        """Danh gia lai nut Tiep tuc / Sub lai tu dau theo file SRT da nap
+        va tien trinh da luu. Goi sau khi nap SRT, doi cai dat (giong/toc
+        do/cao do/che do/thu muc luu), xuat xong hoac da huy.
+        - Sub lai tu dau: sang khi da nap file SRT (co danh sach cau).
+        - Tiep tuc: chi sang khi co tien trinh dang do HOP LE (dung file
+          SRT, dung giong/toc do/cao do/che do, con cau chua xong, file
+          cac cau da xong van con)."""
+        co_srt = bool(self._tree_ids)
+        self.btn_sub_lai.configure(state="normal" if co_srt else "disabled")
+        self.tien_trinh = self._tien_trinh_hop_le() if co_srt else None
+        self.btn_tiep_tuc.configure(
+            state="normal" if self.tien_trinh else "disabled")
+
+    def _tien_trinh_hop_le(self):
+        """Doc tien-trinh.json trong thu muc xuat hien tai (va cac thu
+        muc (1), (2)... neu lan xuat truoc tao thu muc moi), kiem tra
+        con hop le khong. Tra ve dict tien trinh da loc (chi giu cau
+        nao co file audio that) hoac None neu khong dung duoc nua (doi
+        file SRT, doi giong/toc do/cao do/che do, khong con cau chua
+        xong, hoac file cac cau da xong da mat). Neu co nhieu tien
+        trinh thi lay cai co nhieu cau xong nhat."""
+        if not self.thu_muc_xuat:
+            return None
+        srt = self.e_srt.get().strip()
+        if not srt or not os.path.isfile(srt):
+            return None
+        try:
+            st = os.stat(srt)
+        except OSError:
+            return None
+        # Cac thu muc ung vien: thu muc mac dinh + cac thu muc (1),
+        # (2)... (lan xuat truoc co the da tao thu muc moi vi thu muc
+        # cu da co ket qua).
+        thu_muc_goc = os.path.dirname(self.thu_muc_xuat)
+        ten_goc = os.path.basename(self.thu_muc_xuat)
+        ung_vien = [self.thu_muc_xuat]
+        for i in range(1, 21):
+            thu_muc_i = os.path.join(thu_muc_goc, "%s (%d)" % (ten_goc, i))
+            if os.path.isdir(thu_muc_i):
+                ung_vien.append(thu_muc_i)
+            else:
+                break
+        tot_nhat = None
+        for thu_muc in ung_vien:
+            tt = _doc_tien_trinh(thu_muc)
+            if not tt:
+                continue
+            if os.path.abspath(tt.get("srt", "")) != os.path.abspath(srt):
+                continue
+            if (tt.get("srt_kich_thuoc") != st.st_size
+                    or int(tt.get("srt_mtime", -1)) != int(st.st_mtime)):
+                continue
+            try:
+                # v1.3: toc_do la he so nhan (so thuc) - so sanh co
+                # dung sai nho vi slider luu dang float.
+                toc_do_tt = float(tt.get("toc_do", 1.0))
+                toc_do_hien = float(self.sl_toc_do.get())
+                # v1.4: toc_do_toi_da + tu_dong_toc_do cung phai khop
+                # (doi cai dat toc do thi cac cau con lai doc khac di).
+                # Tien trinh v1.3 cu khong co 2 khoa nay -> mac dinh
+                # (1.35x, True) nen van hop le neu giao dien dang de
+                # mac dinh.
+                toi_da_tt = float(tt.get("toc_do_toi_da", 1.35))
+                toi_da_hien = float(self.sl_toc_do_toi_da.get())
+                tu_dong_tt = bool(tt.get("tu_dong_toc_do", True))
+                if (tt.get("giong") != self.cb_giong.get()
+                        or abs(toc_do_tt - toc_do_hien) > 0.001
+                        or abs(toi_da_tt - toi_da_hien) > 0.001
+                        or tu_dong_tt != bool(
+                            self.var_tu_dong_toc_do.get())
+                        or int(tt.get("cao_do", 0)) != int(self.sl_cao_do.get())
+                        or tt.get("che_do") != self.che_do.get()):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            tong = int(tt.get("tong_cau", 0))
+            if tong != len(self._tree_ids) or tong <= 0:
+                continue
+            thu_muc_rieng = tt.get("thu_muc_rieng") or os.path.join(
+                tt.get("thu_muc", thu_muc), "tung-cau")
+            xong = []
+            for chi_so in tt.get("cau_da_xong", []):
+                try:
+                    chi_so = int(chi_so)
+                except (TypeError, ValueError):
+                    continue
+                f = os.path.join(thu_muc_rieng, "%03d.mp3" % chi_so)
+                # Chi tinh la xong neu file audio that su ton tai VA co
+                # du lieu (file 0 byte do doc loi de lai thi phai doc
+                # lai).
+                if os.path.isfile(f) and os.path.getsize(f) > 0:
+                    xong.append(chi_so)
+            if not xong or len(xong) >= tong:
+                continue
+            tt = dict(tt)
+            tt["cau_da_xong"] = sorted(set(xong))
+            tt["thu_muc_rieng"] = thu_muc_rieng
+            tt["thu_muc"] = tt.get("thu_muc", thu_muc)
+            # v1.4: toc do thuc tung cau da xong (de hien lai trang thai
+            # "Xong (1.60x)" khi noi lai file cu; khoa JSON la chuoi nen
+            # doi lai sang so nguyen).
+            toc_do_cau = {}
+            try:
+                for k, v in (tt.get("toc_do_cau") or {}).items():
+                    toc_do_cau[int(k)] = float(v)
+            except (TypeError, ValueError):
+                toc_do_cau = {}
+            tt["toc_do_cau"] = toc_do_cau
+            if tot_nhat is None or len(xong) > len(
+                    tot_nhat["cau_da_xong"]):
+                tot_nhat = tt
+        return tot_nhat
+
+    # ----- chon file / danh sach cau -----
+    def _chon_srt(self):
+        p = filedialog.askopenfilename(filetypes=[("Phụ đề SRT", "*.srt"),
+                                                 ("Mọi file", "*.*")])
+        if p:
+            self.e_srt.delete(0, "end")
+            self.e_srt.insert(0, p)
+            self._nap_danh_sach_cau(p)
+
+    def _nap_danh_sach_cau(self, duong_dan):
+        """Import file SRT: doc ngay va hien danh sach cau + thoi gian.
+        Tra ve list cau, hoac None neu loi."""
+        for item in self.tree_cau.get_children():
+            self.tree_cau.delete(item)
+        self._tree_ids = {}
+        try:
+            cac_cau = doc_srt(duong_dan)
+        except Exception as e:
+            self.lb_so_cau.configure(
+                text="Lỗi đọc file SRT: %s" % e)
+            messagebox.showerror(STUDIO_TITLE, "Lỗi đọc file SRT:\n%s" % e)
+            return None
+        if not cac_cau:
+            self.lb_so_cau.configure(
+                text="Không tìm thấy câu phụ đề nào trong file này.")
+            self.cac_cau = []
+            return []
+        # v1.3: giu danh sach cau de nut 'Nghe thu' lay cau dang chon.
+        self.cac_cau = cac_cau
+        for cau in cac_cau:
+            iid = self.tree_cau.insert("", "end", values=(
+                cau["chi_so"],
+                _dinh_dang_ms(cau["bat_dau_ms"]),
+                _dinh_dang_ms(cau["ket_thuc_ms"]),
+                cau["text"][:80],
+                "Chờ"))
+            self._tree_ids[cau["chi_so"]] = iid
+        tong_ms = max(c["ket_thuc_ms"] for c in cac_cau)
+        self.lb_so_cau.configure(
+            text="Đã nạp %d câu, tổng dài %.1f giây (từ %s đến %s)." % (
+                len(cac_cau), tong_ms / 1000.0,
+                _dinh_dang_ms(cac_cau[0]["bat_dau_ms"]),
+                _dinh_dang_ms(tong_ms)))
+        self._log("Đã nạp %d câu từ file SRT." % len(cac_cau))
+        # v1.3: thu muc xuat mac dinh cho file SRT nay + danh gia lai
+        # nut "Tiep tuc" (co tien trinh dang do cua file nay khong?).
+        ten_goc = os.path.splitext(os.path.basename(duong_dan))[0]
+        # (v7.0, phu luc 4) Thu muc xuat mac dinh = thu muc chua file SRT.
+        thu_muc_srt = os.path.dirname(os.path.abspath(duong_dan))
+        self.e_luu.delete(0, "end")
+        self.e_luu.insert(0, thu_muc_srt)
+        self.thu_muc_xuat = thu_muc_srt
+        self._cap_nhat_nut_tiep_tuc()
+        return cac_cau
+
+    def _dat_trang_thai_cau(self, chi_so, trang_thai):
+        """Dat trang thai 1 cau trong danh sach (goi tu luong worker,
+        qua hang doi de dung luong chinh cap nhat giao dien)."""
+        self.hang_doi.put(("trang_thai_cau", chi_so, trang_thai))
+
+    def _chon_thu_muc(self):
+        p = filedialog.askdirectory()
+        if p:
+            self.e_luu.delete(0, "end")
+            self.e_luu.insert(0, p)
+            # Doi thu muc luu thi thu muc xuat doi theo -> danh gia lai
+            # nut "Tiep tuc" (v1.3).
+            if self._tree_ids:
+                srt = self.e_srt.get().strip()
+                ten_goc = os.path.splitext(os.path.basename(srt))[0]
+                self.thu_muc_xuat = os.path.join(p, ten_goc)
+            self._cap_nhat_nut_tiep_tuc()
+
+    def _mo_thu_muc_ket_qua(self):
+        # Uu tien mo dung thu muc chua file MP3 vua xuat; chua co thi mo
+        # thu muc luu da chon.
+        p = self.thu_muc_ket_qua or self.e_luu.get().strip() \
+            or mac_dinh_thu_muc_luu_srt()
+        if os.path.isdir(p):
+            if sys.platform.startswith("win"):
+                os.startfile(p)
+            else:
+                messagebox.showinfo(STUDIO_TITLE, "Thư mục kết quả:\n" + p)
+        else:
+            messagebox.showinfo(STUDIO_TITLE, "Chưa có thư mục kết quả:\n" + p)
+
+    # ----- log / tien trinh -----
+    def _log(self, s):
+        self.hang_doi.put(("log", s))
+
+    def _tien_trinh(self, phan_tram, nhan):
+        self.hang_doi.put(("tien_trinh", phan_tram, nhan))
+
+    def _xu_ly_hang_doi(self):
+        try:
+            while True:
+                muc = self.hang_doi.get_nowait()
+                if muc[0] == "log":
+                    self.txt_log.insert("end", muc[1] + "\n")
+                    self.txt_log.see("end")
+                elif muc[0] == "tien_trinh":
+                    self.thanh_tien_trinh["value"] = muc[1]
+                    self.lb_tien_trinh.configure(text=muc[2])
+                elif muc[0] == "trang_thai_cau":
+                    iid = self._tree_ids.get(muc[1])
+                    if iid and self.tree_cau.exists(iid):
+                        vals = list(self.tree_cau.item(iid, "values"))
+                        vals[4] = muc[2]
+                        self.tree_cau.item(iid, values=tuple(vals))
+                        self.tree_cau.see(iid)
+                elif muc[0] == "ket_qua":
+                    self.lb_ket_qua.configure(text=muc[1])
+                elif muc[0] == "nghe_xong":
+                    # v1.3: nghe thu xong (tu nhien hoac bam Dung) - mo
+                    # lai nut Nghe thu, tat nut Dung.
+                    self.dang_nghe = False
+                    self._dung_nghe.clear()
+                    if not self.dang_chay:
+                        self.btn_nghe_thu.configure(state="normal")
+                    self.btn_dung_nghe.configure(state="disabled")
+                elif muc[0] == "xong":
+                    self.dang_chay = False
+                    self._mo_khoa_nut()
+        except queue.Empty:
+            pass
+        self.after(200, self._xu_ly_hang_doi)
+
+    def _luu_cai_dat_hien_tai(self):
+        self.cfg.update({
+            "giong": self.cb_giong.get(),
+            # v1.3: toc_do luu dang he so nhan (1.35x).
+            "toc_do": float(self.sl_toc_do.get()),
+            # v1.4: toc do toi da + bat/tat tu dong toc do tung cau.
+            "toc_do_toi_da": float(self.sl_toc_do_toi_da.get()),
+            "tu_dong_toc_do": bool(self.var_tu_dong_toc_do.get()),
+            "cao_do": int(self.sl_cao_do.get()),
+            "thu_muc_luu": self.e_luu.get().strip(),
+            "che_do": self.che_do.get(),
+        })
+        luu_config(self.cfg)
+
+    # ----- kiem tra giong -----
+    def _kiem_tra_giong(self):
+        if self.dang_chay:
+            return
+        self._luu_cai_dat_hien_tai()
+        # Lay het gia tri giao dien o luong chinh, truyen sang luong worker
+        # (luong worker khong doc truc tiep widget tkinter - khong an toan).
+        ts = {
+            "voice": GIONG.get(self.cb_giong.get(), GIONG[GIONG_MAC_DINH]),
+            "giong_hien_thi": self.cb_giong.get(),
+            "toc_do": float(self.sl_toc_do.get()),
+            "cao_do": int(self.sl_cao_do.get()),
+            "thu_muc": self.e_luu.get().strip() or mac_dinh_thu_muc_luu_srt(),
+        }
+        self.dang_chay = True
+        # v1.3: khoa cac nut khac trong luc kiem tra (khong cho Huy vi
+        # kiem tra chi doc 1 cau ngan, xong ngay).
+        self._khoa_nut_khi_chay(cho_huy=False)
+        threading.Thread(target=self._chay_kiem_tra, args=(ts,),
+                         daemon=True).start()
+
+    def _chay_kiem_tra(self, ts):
+        voice = ts["voice"]
+        # v1.3 - giong may: khong can edge-tts, doc thu thang ra loa
+        # (khong can file, khong can ffmpeg).
+        if voice == "may":
+            self._log("Kiểm tra giọng %s (giọng tiếng Việt có sẵn trên "
+                      "máy Windows)..." % ts["giong_hien_thi"])
+            ok, loi = nghe_giong_may(MAU_DOC_THU, ts["toc_do"],
+                                     ts["cao_do"], log_cb=self._log)
+            if ok:
+                self._log("OK! Đã đọc thử ra loa bằng giọng máy.")
+            else:
+                self._log("LỖI: không dùng được giọng máy. %s" % loi)
+            self.hang_doi.put(("xong",))
+            return
+        try:
+            import edge_tts
+            ver = getattr(edge_tts, "__version__", "?")
+            import edge_tts.communicate as _comm
+            may_chu = _ten_may_chu(_comm.WSS_URL)
+        except Exception:
+            ver, may_chu = "?", "?"
+        self._log("Kiểm tra giọng %s (%s)..." % (ts["giong_hien_thi"], voice))
+        self._log("edge-tts %s; máy chủ giọng: %s" % (ver, may_chu))
+        thu_muc = ts["thu_muc"]
+        try:
+            os.makedirs(thu_muc, exist_ok=True)
+        except OSError as e:
+            self._log("Lỗi tạo thư mục: %s" % e)
+            self.hang_doi.put(("xong",))
+            return
+        dich = os.path.join(thu_muc, "doc-thu.mp3")
+        ok, bo_xac_minh, loi = doc_cau_thanh_mp3(
+            MAU_DOC_THU, voice, ts["toc_do"], ts["cao_do"], dich,
+            log_cb=self._log)
+        if ok:
+            self._log("OK! Đã tạo file đọc thử: %s%s" % (
+                dich, " (đã dùng chế độ bỏ xác minh SSL)" if bo_xac_minh else ""))
+        else:
+            self._log("LỖI: không tạo được giọng. %s" % loi)
+            self._log("Tool đã thử cả máy chủ gốc speech.platform.bing.com "
+                      "và máy chủ phụ api.msedgeservices.com. Kiểm tra mạng "
+                      "rồi bấm lại; nếu vẫn lỗi, xem mã lỗi [403/429/"
+                      "khong-co-audio] trong log ở trên.")
+        self.hang_doi.put(("xong",))
+
+    # ----- nghe thu giong (nut PLAY phat ra loa, v1.3) -----
+    def bam_nghe_thu(self):
+        """Nut '▶ Nghe thu': doc 1 cau va PHAT TIENG RA LOA NGAY trong
+        tool (khong tao file MP3, khong mo trinh phat ngoai). Lay van
+        ban tu o go (neu co) hoac tu cau dang chon trong danh sach.
+        Khong nghe duoc trong luc dang xuat (tranh 2 viec cung goi
+        giong 1 luc)."""
+        if self.dang_chay or self.dang_nghe:
+            return
+        text = self.e_nghe_thu.get().strip()
+        if not text:
+            # Lay cau dang chon trong danh sach (neu co). _tree_ids map
+            # chi_so -> iid nen phai tim nguoc chi_so tu iid da chon.
+            chon = self.tree_cau.selection()
+            if chon:
+                iid_chon = chon[0]
+                chi_so = None
+                for cs, iid in self._tree_ids.items():
+                    if iid == iid_chon:
+                        chi_so = cs
+                        break
+                if chi_so is not None:
+                    for cau in (self.cac_cau or []):
+                        if cau["chi_so"] == chi_so:
+                            text = cau["text"]
+                            break
+        if not text:
+            messagebox.showinfo(
+                APP_TITLE,
+                "Hãy gõ 1 đoạn văn ngắn vào ô Nghe thử, hoặc chọn 1 câu "
+                "trong danh sách rồi bấm ▶ Nghe thử.")
+            return
+        voice = GIONG.get(self.cb_giong.get(), GIONG[GIONG_MAC_DINH])
+        toc_do = float(self.sl_toc_do.get())
+        cao_do = int(self.sl_cao_do.get())
+        self.dang_nghe = True
+        self._dung_nghe.clear()
+        self.btn_nghe_thu.configure(state="disabled")
+        self.btn_dung_nghe.configure(state="normal")
+        self._log("Nghe thử giọng %s: %s"
+                  % (self.cb_giong.get(), text[:80]))
+        threading.Thread(target=self._nghe_thu_worker,
+                         args=(text, voice, toc_do, cao_do),
+                         daemon=True).start()
+
+    def _nghe_thu_worker(self, text, voice, toc_do, cao_do):
+        """Luong nghe thu: giong may thi doc thang ra loa; giong online
+        thi doc ra file MP3 tam roi phat ra loa trong tool (MCI), xong
+        xoa file tam (khong luu file)."""
+        try:
+            if voice == "may":
+                ok, loi = nghe_giong_may(text, toc_do, cao_do,
+                                         log_cb=self._log,
+                                         dung=self._dung_nghe)
+                if not ok:
+                    self._log("LỖI nghe thử giọng máy: %s" % loi)
+            else:
+                import tempfile
+                fd, tam_path = tempfile.mkstemp(suffix=".mp3")
+                os.close(fd)
+                try:
+                    ok, _, loi = doc_thanh_mp3(
+                        text, voice, toc_do, cao_do, tam_path,
+                        log_cb=self._log)
+                    if not ok:
+                        self._log("LỖI nghe thử: %s" % loi)
+                    elif not self._dung_nghe.is_set():
+                        ok_phat, loi_phat = _phat_mp3(
+                            tam_path, dung=self._dung_nghe)
+                        if not ok_phat and "đã dừng" not in loi_phat:
+                            self._log("LỖI phát âm thanh: %s" % loi_phat)
+                finally:
+                    _xoa_file_quiet(tam_path)
+        except Exception as e:
+            self._log("LỖI nghe thử: %s" % _tom_tat_loi(e))
+        finally:
+            self.hang_doi.put(("nghe_xong",))
+
+    def _dung_nghe_thu(self):
+        """Nut 'Dung': dung nghe thu giua chung (dung phat audio /
+        tat tien trinh giong may)."""
+        if not self.dang_nghe:
+            return
+        self._dung_nghe.set()
+        self._log("Đã dừng nghe thử.")
+
+    # ----- tu cap nhat (v1.1, theo mau Chipchipdownload v6.2) -----
+    # Repo PUBLIC nen khong can token: doc Releases qua API khong xac thuc.
+
+
+
+
+
+
+
+    # ----- chay chinh -----
+    def _bam_huy(self):
+        """Nut Huy: dat co, worker se dung sau khi cau dang doc xong
+        (khong ngat giua cau). Mo nut ngay de khong bam 2 lan."""
+        if not self.dang_chay:
+            return
+        self._yeu_cau_huy.set()
+        self.btn_huy.configure(state="disabled")
+        self._log("Đã bấm Hủy — sẽ dừng sau khi câu đang đọc xong...")
+
+    def _bat_dau(self):
+        """Nut XUAT MP3 LONG TIENG: xuat moi tu cau 1 vao thu muc mac
+        dinh (neu thu muc da co ket qua cu thi tu dong dung thu muc
+        moi ten (1), (2)... de khong ghi de - giong nut 'Sub lai tu
+        dau')."""
+        if self.dang_chay:
+            return
+        srt = self.e_srt.get().strip()
+        if not srt or not os.path.isfile(srt):
+            messagebox.showwarning(STUDIO_TITLE, "Hãy chọn file SRT trước.")
+            return
+        # Neu danh sach cau chua nap (vd: go duong dan tay), nap ngay.
+        if not self._tree_ids:
+            if self._nap_danh_sach_cau(srt) is None:
+                return
+        ffmpeg = tim_ffmpeg()
+        che_do = self.che_do.get()
+        if che_do in ("gop", "ca_hai") and not ffmpeg:
+            messagebox.showwarning(
+                APP_TITLE,
+                "Chế độ gộp cần ffmpeg. Không tìm thấy ffmpeg trong PATH "
+                "hay cạnh file exe.\nHãy đặt ffmpeg.exe cạnh tool rồi chạy lại, "
+                "hoặc chọn chế độ 'Từng câu riêng'.")
+            return
+        thu_muc_goc = self.e_luu.get().strip() or mac_dinh_thu_muc_luu_srt()
+        ten_goc = os.path.splitext(os.path.basename(srt))[0]
+        # (v7.0, phu luc 4) Moi thu cung 1 thu muc du an: MP3 long tieng
+        # luu ngay trong thu muc chua file phu de, khong tao thu muc moi.
+        thu_muc_moi = thu_muc_goc
+        self._log("Xuất MP3 vào cùng thư mục dự án: %s" % thu_muc_moi)
+        self.thu_muc_xuat = thu_muc_moi
+        self._bat_dau_chung(srt, ffmpeg, thu_muc_ghi_de=thu_muc_moi)
+
+    def _bat_dau_tiep_tuc(self):
+        """Nut Tiep tuc: doc tiep tu cau chua xong va noi vao file cu
+        (khong doc lai cac cau da xong, khong tao file moi). Chi sang
+        khi co tien trinh dang do hop le."""
+        if self.dang_chay:
+            return
+        tt = self._tien_trinh_hop_le()
+        if not tt:
+            messagebox.showinfo(
+                APP_TITLE,
+                "Không còn tiến trình dở dang nào khớp với file SRT và "
+                "cài đặt hiện tại (có thể anh đã đổi file SRT, giọng, "
+                "tốc độ, cao độ hoặc chế độ đầu ra).")
+            self._cap_nhat_nut_tiep_tuc()
+            return
+        srt = self.e_srt.get().strip()
+        ffmpeg = tim_ffmpeg()
+        if tt["che_do"] in ("gop", "ca_hai") and not ffmpeg:
+            messagebox.showwarning(
+                APP_TITLE,
+                "Chế độ gộp cần ffmpeg. Không tìm thấy ffmpeg trong PATH "
+                "hay cạnh file exe.\nHãy đặt ffmpeg.exe cạnh tool rồi chạy lại, "
+                "hoặc chọn chế độ 'Từng câu riêng'.")
+            return
+        # Dong bo giao dien theo cai dat da luu trong tien trinh (de cac
+        # cau moi doc cung giong/toc do/cao do/che do voi cau cu).
+        self.cb_giong.set(tt["giong"])
+        # v1.3: toc_do luu dang he so nhan (1.35x).
+        self.sl_toc_do.set(float(tt["toc_do"]))
+        # v1.4: toc_do_toi_da + tu_dong_toc_do (mac dinh v1.3 cu).
+        self.sl_toc_do_toi_da.set(
+            max(1.0, min(2.0, float(tt.get("toc_do_toi_da", 1.35)))))
+        self.var_tu_dong_toc_do.set(bool(tt.get("tu_dong_toc_do", True)))
+        if self.var_tu_dong_toc_do.get():
+            self.sl_toc_do_toi_da.configure(state="normal")
+        else:
+            self.sl_toc_do_toi_da.configure(state="disabled")
+        self.sl_cao_do.set(int(tt["cao_do"]))
+        self.che_do.set(tt["che_do"])
+        self.lb_toc_do.configure(
+            text=_dinh_dang_toc_do(float(tt["toc_do"])))
+        self.lb_toc_do_toi_da.configure(
+            text=_dinh_dang_toc_do(float(tt.get("toc_do_toi_da", 1.35))))
+        self.lb_cao_do.configure(
+            text=_dinh_dang_cao_do(int(tt["cao_do"])))
+        self.thu_muc_xuat = tt["thu_muc"]
+        self._log("Tiếp tục từ tiến trình đã lưu: đã xong %d/%d câu, đọc "
+                  "tiếp từ câu chưa xong và nối vào file cũ."
+                  % (len(tt["cau_da_xong"]), tt["tong_cau"]))
+        self._bat_dau_chung(srt, ffmpeg, thu_muc_ghi_de=tt["thu_muc"],
+                            cau_da_xong_truoc=set(tt["cau_da_xong"]),
+                            toc_do_cau_truoc=tt.get("toc_do_cau") or {},
+                            la_tiep_tuc=True)
+
+    def _bat_dau_sub_lai(self):
+        """Nut Sub lai tu dau: doc lai tu cau 1, tao file MP3 moi (thu
+        muc moi ten (1), (2)... neu file cu da co - khong ghi de file
+        cu)."""
+        if self.dang_chay:
+            return
+        srt = self.e_srt.get().strip()
+        if not srt or not os.path.isfile(srt):
+            messagebox.showwarning(STUDIO_TITLE, "Hãy chọn file SRT trước.")
+            return
+        if not self._tree_ids:
+            if self._nap_danh_sach_cau(srt) is None:
+                return
+        ffmpeg = tim_ffmpeg()
+        che_do = self.che_do.get()
+        if che_do in ("gop", "ca_hai") and not ffmpeg:
+            messagebox.showwarning(
+                APP_TITLE,
+                "Chế độ gộp cần ffmpeg. Không tìm thấy ffmpeg trong PATH "
+                "hay cạnh file exe.\nHãy đặt ffmpeg.exe cạnh tool rồi chạy lại, "
+                "hoặc chọn chế độ 'Từng câu riêng'.")
+            return
+        thu_muc_goc = self.e_luu.get().strip() or mac_dinh_thu_muc_luu_srt()
+        ten_goc = os.path.splitext(os.path.basename(srt))[0]
+        # (v7.0, phu luc 4) Sub lai van o cung thu muc du an.
+        thu_muc_moi = thu_muc_goc
+        self.thu_muc_xuat = thu_muc_moi
+        self._log("Sub lại từ đầu trong cùng thư mục dự án: %s" % thu_muc_moi)
+        self._bat_dau_chung(srt, ffmpeg, thu_muc_ghi_de=thu_muc_moi)
+
+    def _bat_dau_chung(self, srt, ffmpeg, thu_muc_ghi_de=None,
+                       cau_da_xong_truoc=None, la_tiep_tuc=False,
+                       toc_do_cau_truoc=None):
+        """Chuan bi chung truoc khi chay worker xuat (lay het gia tri
+        giao dien o luong chinh, khoa nut, mo worker)."""
+        self._luu_cai_dat_hien_tai()
+        # Lay het gia tri giao dien o luong chinh, truyen sang luong worker
+        # (luong worker khong doc truc tiep widget tkinter - khong an toan).
+        ts = {
+            "voice": GIONG.get(self.cb_giong.get(), GIONG[GIONG_MAC_DINH]),
+            "giong_hien_thi": self.cb_giong.get(),
+            # v1.3: toc_do la he so nhan (1.35x).
+            "toc_do": float(self.sl_toc_do.get()),
+            # v1.4: toc do toi da + bat/tat tu dong toc do tung cau.
+            "toc_do_toi_da": float(self.sl_toc_do_toi_da.get()),
+            "tu_dong_toc_do": bool(self.var_tu_dong_toc_do.get()),
+            "cao_do": int(self.sl_cao_do.get()),
+            "che_do": self.che_do.get(),
+            "thu_muc_goc": self.e_luu.get().strip() or mac_dinh_thu_muc_luu_srt(),
+        }
+        self.dang_chay = True
+        self._yeu_cau_huy.clear()
+        # v1.3: khoa cac nut khac trong luc xuat (chi de nut Huy sang).
+        # Neu dang nghe thu thi dung phat luon (tranh 2 viec cung goi
+        # giong 1 luc).
+        self._dung_nghe.set()
+        self._khoa_nut_khi_chay(cho_huy=True)
+        self.hang_doi.put(("ket_qua", ""))
+        threading.Thread(target=self._chay,
+                         args=(srt, ffmpeg, ts, thu_muc_ghi_de,
+                               cau_da_xong_truoc, la_tiep_tuc,
+                               toc_do_cau_truoc),
+                         daemon=True).start()
+
+    def _chay(self, srt, ffmpeg, ts, thu_muc_ghi_de=None,
+              cau_da_xong_truoc=None, la_tiep_tuc=False,
+              toc_do_cau_truoc=None):
+        from pydub import AudioSegment
+        if ffmpeg:
+            AudioSegment.converter = ffmpeg
+        voice = ts["voice"]
+        toc_do = ts["toc_do"]
+        cao_do = ts["cao_do"]
+        che_do = ts["che_do"]
+        thu_muc_goc = ts["thu_muc_goc"]
+        # v1.4: toc do toi da + bat/tat tu dong toc do tung cau.
+        toc_do_toi_da = ts.get("toc_do_toi_da", 1.35)
+        tu_dong_toc_do = ts.get("tu_dong_toc_do", True)
+        ten_goc = os.path.splitext(os.path.basename(srt))[0]
+        # v1.3: thu muc xuat co the duoc chi dinh truoc (Tiep tuc: dung
+        # lai thu muc cu; Xuat moi/Sub lai: thu muc moi (1), (2)...).
+        thu_muc = thu_muc_ghi_de or os.path.join(thu_muc_goc, ten_goc)
+        thu_muc_rieng = os.path.join(thu_muc, "tung-cau")
+        self.thu_muc_ket_qua = thu_muc
+        self.file_gop = None
+        try:
+            os.makedirs(thu_muc_rieng, exist_ok=True)
+        except OSError as e:
+            self._log("Lỗi tạo thư mục: %s" % e)
+            self.hang_doi.put(("xong",))
+            return
+        # v1.3: chay moi (khong phai Tiep tuc) thi xoa tien trinh cu cua
+        # thu muc nay (lan chay moi thay the no).
+        if not la_tiep_tuc:
+            _xoa_tien_trinh(thu_muc)
+        try:
+            cac_cau = doc_srt(srt)
+        except Exception as e:
+            self._log("Lỗi đọc file SRT: %s" % e)
+            self.hang_doi.put(("xong",))
+            return
+        if not cac_cau:
+            self._log("Không tìm thấy câu phụ đề nào trong file SRT.")
+            self.hang_doi.put(("xong",))
+            return
+        tong = len(cac_cau)
+        self._log("Đọc %d câu bằng giọng %s (%s), tốc độ %s, cao độ %s"
+                  % (tong, ts["giong_hien_thi"], voice,
+                     _dinh_dang_toc_do(toc_do), _dinh_dang_cao_do(cao_do)))
+        # v1.4: bao ro che do toc do tu dong dang dung (de anh biet cau
+        # dai se tu tang toc toi da bao nhieu).
+        if tu_dong_toc_do:
+            if not ffmpeg:
+                self._log("Tự động chỉnh tốc độ từng câu đang BẬT nhưng "
+                          "không tìm thấy ffmpeg (cần ffmpeg để đo thời "
+                          "lượng và tăng tốc) - các câu sẽ đọc ở tốc độ "
+                          "cơ bản %s." % _dinh_dang_toc_do(toc_do))
+            else:
+                self._log("Tự động chỉnh tốc độ từng câu: câu dài tự "
+                          "tăng tốc tối đa %s (đo thời lượng thật rồi "
+                          "dùng ffmpeg atempo, không gọi lại API giọng)."
+                          % _dinh_dang_toc_do(toc_do_toi_da))
+        self._log("Thư mục lưu: %s" % thu_muc)
+        for cau in cac_cau:
+            self._dat_trang_thai_cau(cau["chi_so"], "Chờ")
+        loi_cau = {}  # chi_so -> ly do loi
+        can_gop = che_do in ("gop", "ca_hai")
+        so_cau_xong = 0  # dem that, dung ca khi huy giua chung
+        cau_da_xong = set()  # chi_so cac cau da doc xong
+        # v1.4: toc do thuc tung cau da xong (de luu vao tien trinh va
+        # hien lai trang thai "Xong (1.60x)" khi Tiep tuc).
+        toc_do_cau = dict(toc_do_cau_truoc or {})
+        da_huy = False
+        cau_dung = 0  # chi so cau dang doc luc bam Huy
+        # v1.3 - GHEP DAN: moi cau doc xong la ghep ngay vao file long
+        # tieng dang tao (dung moc thoi gian SRT), khong doi den cuoi
+        # moi gop 1 lan. Huy giua chung hay loi giua chung thi file
+        # gop van giu cac cau da xong; mo file ra nghe thu duoc ngay ca
+        # khi chua chay xong.
+        gop = None
+        dich_gop = None
+        if can_gop:
+            dich_gop = os.path.join(thu_muc, ten_goc + "_long-tieng.mp3")
+            gop = GopDan(
+                os.path.join(thu_muc, ten_goc + "_long-tieng-tam.wav"),
+                dich_gop,
+                tong_ms=max(c["ket_thuc_ms"] for c in cac_cau),
+                log_cb=self._log)
+            self._log("Gộp dần: mỗi câu đọc xong sẽ ghép ngay vào file "
+                      "lồng tiếng (đúng timestamp SRT). Vì API giọng "
+                      "Microsoft chỉ nhận 1 đoạn văn mỗi lần gọi nên "
+                      "tool phải đọc từng câu riêng rồi mới ghép lại "
+                      "thành 1 file duy nhất - không gọi 1 lần cho cả "
+                      "%d câu được." % tong)
+        # v1.3 - TIEP TUC: cac cau da xong o lan truoc thi danh dau Xong
+        # va noi lai vao file gop (doc lai file MP3 tung cau da co,
+        # khong goi lai API giong). Cau nao file bi hong thi doc lai.
+        if la_tiep_tuc and cau_da_xong_truoc:
+            cau_hong = set()
+            for cau in cac_cau:
+                if cau["chi_so"] in cau_da_xong_truoc:
+                    dich_cu = os.path.join(
+                        thu_muc_rieng, "%03d.mp3" % cau["chi_so"])
+                    if (gop is not None
+                            and not gop.them_cau(cau, dich_cu)):
+                        cau_hong.add(cau["chi_so"])
+                        continue
+                    cau_da_xong.add(cau["chi_so"])
+                    so_cau_xong += 1
+                    # v1.4: hien lai toc do thuc cua cau da xong (neu co
+                    # luu trong tien trinh).
+                    toc_do_cu = toc_do_cau.get(cau["chi_so"])
+                    if tu_dong_toc_do and toc_do_cu is not None:
+                        self._dat_trang_thai_cau(
+                            cau["chi_so"], "Xong (%.2fx)" % toc_do_cu)
+                    else:
+                        self._dat_trang_thai_cau(cau["chi_so"], "Xong")
+            if cau_hong:
+                self._log("Có %d câu đã xong nhưng file bị hỏng, sẽ đọc "
+                          "lại: %s" % (len(cau_hong), sorted(cau_hong)))
+            self._log("Đã nối lại %d câu đã xong vào file gộp."
+                      % len(cau_da_xong))
+
+        def doc_1_cau(cau, i):
+            """Doc 1 cau, cap nhat tien trinh + trang thai trong danh sach.
+            Cau xong thi GHEP NGAY vao file gop (neu che do gop).
+            Tra ve True neu xong."""
+            nonlocal so_cau_xong
+            dich = os.path.join(thu_muc_rieng, "%03d.mp3" % cau["chi_so"])
+            self._tien_trinh(int((i - 1) * 100 / tong),
+                             "Đang đọc câu %d/%d..." % (i, tong))
+            self._dat_trang_thai_cau(cau["chi_so"], "Đang đọc...")
+            self._log("Câu %d/%d (%.1fs): %s" % (
+                i, tong, (cau["ket_thuc_ms"] - cau["bat_dau_ms"]) / 1000.0,
+                cau["text"][:80]))
+            ok, bo_xac_minh, loi = doc_cau_thanh_mp3(
+                cau["text"], voice, toc_do, cao_do, dich,
+                log_cb=self._log, ffmpeg=ffmpeg)
+            if not ok:
+                self._dat_trang_thai_cau(cau["chi_so"], "Lỗi: " + (loi or "?")[:60])
+                self._log("  -> LỖI câu %d: %s" % (cau["chi_so"], loi))
+                return False
+            # v1.4: toc do tu dong theo slot SRT - do thoi luong that
+            # cua file vua tao roi dung ffmpeg atempo tang toc neu can
+            # (khong goi lai API giong). Trang thai hien toc do thuc
+            # cua cau (vd "Xong (1.60x)").
+            toc_do_thuc = _ap_dung_toc_do_tu_dong(
+                dich, cau, toc_do, toc_do_toi_da, tu_dong_toc_do, ffmpeg,
+                log_cb=self._log)
+            toc_do_cau[cau["chi_so"]] = toc_do_thuc
+            so_cau_xong += 1
+            cau_da_xong.add(cau["chi_so"])
+            if tu_dong_toc_do:
+                self._dat_trang_thai_cau(cau["chi_so"],
+                                         "Xong (%.2fx)" % toc_do_thuc)
+            else:
+                self._dat_trang_thai_cau(cau["chi_so"], "Xong")
+            if bo_xac_minh:
+                self._log("  -> Xong (đã dùng chế độ bỏ xác minh SSL)")
+            # v1.3: ghep ngay cau vua xong vao file long tieng.
+            if gop is not None:
+                gop.them_cau(cau, dich)
+            return True
+
+        # Luot 1: doc het cac cau (dung ngay khi bam Huy). Cau nao da
+        # xong o lan truoc (Tiep tuc) thi bo qua, khong doc lai.
+        for i, cau in enumerate(cac_cau, 1):
+            if self._yeu_cau_huy.is_set():
+                da_huy = True
+                cau_dung = i
+                break
+            if cau["chi_so"] in cau_da_xong:
+                continue
+            if not doc_1_cau(cau, i):
+                loi_cau[cau["chi_so"]] = True
+        # Luot 2: cau nao loi thi THU LAI 1 lan nua (loi mang thoang qua),
+        # ghi ro ket qua tung cau, khong lang le bo qua. Bo qua neu da huy.
+        if loi_cau and not da_huy:
+            self._log("Thử lại %d câu lỗi: %s" % (len(loi_cau),
+                                                  sorted(loi_cau)))
+            for i, cau in enumerate(cac_cau, 1):
+                if self._yeu_cau_huy.is_set():
+                    da_huy = True
+                    cau_dung = i
+                    break
+                if cau["chi_so"] not in loi_cau:
+                    continue
+                self._log("Đọc lại câu %d..." % cau["chi_so"])
+                if doc_1_cau(cau, i):
+                    del loi_cau[cau["chi_so"]]
+                    self._log("  -> Câu %d đọc lại THÀNH CÔNG." % cau["chi_so"])
+                else:
+                    self._log("  -> Câu %d vẫn lỗi sau khi thử lại." % cau["chi_so"])
+        so_xong = so_cau_xong
+        if da_huy:
+            self._tien_trinh(int(so_xong * 100 / tong),
+                             "Đã hủy ở câu %d/%d." % (cau_dung, tong))
+            self._log("Đã hủy ở câu %d/%d. Đã xong %d câu, giữ nguyên file "
+                      "các câu đã xong trong %s."
+                      % (cau_dung, tong, so_xong, thu_muc_rieng))
+        else:
+            self._tien_trinh(100, "Đã đọc xong %d/%d câu." % (so_xong, tong))
+        if loi_cau:
+            self._log("Cảnh báo: %d câu vẫn lỗi sau 2 lượt: %s"
+                      % (len(loi_cau), sorted(loi_cau)))
+            # v1.3: cau loi khong co audio - slot cua no giu khoang lang
+            # trong file gop, khong lam hong file gop.
+            for chi_so in sorted(loi_cau):
+                self._log("Đã bỏ qua câu %d (không có audio) - slot của "
+                          "nó giữ khoảng lặng trong file gộp." % chi_so)
+        # v1.3 - HOAN TAT file gop dan: chuyen WAV tam -> MP3 1 lan.
+        # Chi ghi 1 dong loi ngan ra giao dien khi gap su co; log chi
+        # tiet ffmpeg chi ghi vao file ffmpeg-loi.log trong thu muc
+        # ket qua (khong hien tab log dai nhay lien tuc len man hinh).
+        tong_ms_gop = 0
+        if can_gop and gop is not None and gop.so_cau > 0:
+            self._log("Đang hoàn tất file lồng tiếng: %s" % dich_gop)
+            try:
+                ok_gop, tong_ms_gop = gop.hoan_tat(ffmpeg)
+                if ok_gop:
+                    self.file_gop = dich_gop
+                    self._log("XONG file gộp: %s (dài %.1fs, %d câu bị "
+                              "tràn slot, %d câu lỗi đã bỏ qua)"
+                              % (dich_gop, tong_ms_gop / 1000.0,
+                                 gop.tran_slot, gop.bo_qua))
+                else:
+                    self._log("LỖI hoàn tất file gộp (xem chi tiết trong "
+                              "file ffmpeg-loi.log ở thư mục kết quả).")
+                    _ghi_log_loi_ffmpeg(thu_muc, "hoan_tat tra ve False")
+            except Exception as e:
+                _ghi_log_loi_ffmpeg(thu_muc, traceback.format_exc())
+                self._log("LỖI hoàn tất file gộp: %s (xem chi tiết trong "
+                          "file ffmpeg-loi.log ở thư mục kết quả)"
+                          % _tom_tat_loi(e))
+        elif can_gop:
+            self._log("Không có câu nào đọc xong nên không tạo file gộp.")
+        # v1.3 - LUU/XOA tien trinh: con cau chua xong (huy giua chung
+        # hoac loi) thi luu de bam 'Tiep tuc' doc not; xong tron ven
+        # 100% thi xoa (khong con gi de tiep tuc).
+        if 0 < so_xong < tong:
+            try:
+                st = os.stat(srt)
+                _luu_tien_trinh(thu_muc, {
+                    "srt": srt,
+                    "srt_kich_thuoc": st.st_size,
+                    "srt_mtime": int(st.st_mtime),
+                    "tong_cau": tong,
+                    "cau_da_xong": sorted(cau_da_xong),
+                    "file_gop": dich_gop,
+                    "che_do": che_do,
+                    "giong": ts["giong_hien_thi"],
+                    "toc_do": float(toc_do),
+                    # v1.4: toc do toi da + bat/tat tu dong + toc do thuc
+                    # tung cau da xong (de Tiep tuc noi dung toc do).
+                    "toc_do_toi_da": float(toc_do_toi_da),
+                    "tu_dong_toc_do": bool(tu_dong_toc_do),
+                    "toc_do_cau": {str(k): float(v)
+                                   for k, v in toc_do_cau.items()},
+                    "cao_do": int(cao_do),
+                    "thu_muc": thu_muc,
+                    "thu_muc_rieng": thu_muc_rieng,
+                })
+                self._log("Đã lưu tiến trình (xong %d/%d câu) - bấm "
+                          "'Tiếp tục' để đọc nốt các câu còn lại."
+                          % (so_xong, tong))
+            except Exception:
+                pass
+        else:
+            _xoa_tien_trinh(thu_muc)
+        # Bao ro ket qua: duong dan + do dai file MP3 long tieng.
+        if dich_gop and os.path.isfile(dich_gop):
+            if da_huy:
+                ket_qua = ("ĐÃ HỦY ở câu %d/%d. Đã xong %d/%d câu. File MP3 "
+                           "lồng tiếng (dang dở, chỉ có các câu đã xong):"
+                           "\n%s\nĐộ dài: %.1f giây."
+                           % (cau_dung, tong, so_xong, tong,
+                              dich_gop, tong_ms_gop / 1000.0))
+            else:
+                ket_qua = ("HOÀN TẤT: %d/%d câu. File MP3 lồng tiếng:\n%s\n"
+                           "Độ dài: %.1f giây."
+                           % (so_xong, tong, dich_gop, tong_ms_gop / 1000.0))
+            if loi_cau:
+                ket_qua += " (còn %d câu lỗi: %s)" % (len(loi_cau),
+                                                      sorted(loi_cau))
+            self.hang_doi.put(("ket_qua", ket_qua))
+            self._log(ket_qua)
+        elif che_do == "rieng":
+            if da_huy:
+                ket_qua = ("ĐÃ HỦY ở câu %d/%d. Đã xong %d/%d câu. File "
+                           "từng câu đã xong nằm trong:\n%s"
+                           % (cau_dung, tong, so_xong, tong, thu_muc_rieng))
+            else:
+                ket_qua = ("HOÀN TẤT: %d/%d câu. File từng câu nằm trong:\n%s"
+                           % (so_xong, tong, thu_muc_rieng))
+            self.hang_doi.put(("ket_qua", ket_qua))
+            self._log(ket_qua)
+        elif da_huy:
+            ket_qua = ("ĐÃ HỦY ở câu %d/%d. Chưa xong câu nào."
+                       % (cau_dung, tong))
+            self.hang_doi.put(("ket_qua", ket_qua))
+            self._log(ket_qua)
+        self._log("Thư mục kết quả: %s (bấm 'Mở thư mục kết quả' để xem)"
+                  % thu_muc)
+        self.hang_doi.put(("xong",))
 class CuaSoJob(tk.Toplevel):
     """(v6) Một cửa sổ xử lý 1 video: tải (yt-dlp/IDM) + gộp + xem.
     Trạng thái job được lưu vào jobs.json để lần sau mở lại tiếp tục được.
@@ -1027,11 +3705,17 @@ class CuaSoJob(tk.Toplevel):
             value=cfg.get("cookies") or (
                 COOKIES_MAC_DINH if os.path.isfile(COOKIES_MAC_DINH) else ""))
         self.status_var = tk.StringVar(value="Sẵn sàng.")
+        # (v7.0) Phu de: None = chua quet, True/False = ket qua --list-subs.
+        self.has_subtitle = job.get("has_subtitle")
+        self.subtitle_langs = job.get("subtitle_langs") or []
+        self.subtitle_file = job.get("subtitle_file") or ""
+        self.subtitle_vi_file = job.get("subtitle_vi_file") or ""
+        self.thu_muc_phim = job.get("folder") or ""
         self.tu_gop_var = tk.BooleanVar(value=job.get("tu_gop", True))
         self.xoa_goc_var = tk.BooleanVar(value=job.get("xoa_goc", True))
 
         ten = job.get("title") or "Video mới"
-        self.title("%s - %s" % (APP_TITLE, ten[:60]))
+        self.title("%s - %s" % (STUDIO_TITLE, ten[:60]))
         self.geometry("700x860")
         self.resizable(True, True)
 
@@ -1092,6 +3776,21 @@ class CuaSoJob(tk.Toplevel):
                        variable=self.tu_gop_var,
                        command=self.luu_job_hien_tai).grid(
             row=7, column=0, columnspan=4, sticky="w", **pad)
+        # (v7.0) Phu de: checkbox tick = co phu de (theo yt-dlp
+        # --list-subs), khong tick = khong co. Khong dung nut phu de
+        # tren trinh phat web lam can cu.
+        self.phu_de_var = tk.BooleanVar(value=bool(self.has_subtitle))
+        tk.Checkbutton(f1, text="Phụ đề", variable=self.phu_de_var,
+                       state="disabled").grid(row=8, column=0, sticky="w", **pad)
+        self.phu_de_info_var = tk.StringVar(value=self._nhan_phu_de())
+        tk.Label(f1, textvariable=self.phu_de_info_var, fg="gray").grid(
+            row=8, column=1, sticky="w", **pad)
+        tk.Button(f1, text="Tải phụ đề", command=self.bam_tai_phu_de).grid(
+            row=8, column=2, **pad)
+        tk.Button(f1, text="Thêm phụ đề...", command=self.bam_them_phu_de).grid(
+            row=8, column=3, **pad)
+        tk.Button(f1, text="Dịch phụ đề", command=self.bam_dich_phu_de).grid(
+            row=9, column=0, columnspan=4, sticky="ew", **pad)
 
         # ---- Khung 2: Gộp 2 file đã có ----
         f2 = tk.LabelFrame(self, text=" 2. Gộp 2 file đã có (tải bằng IDM) ",
@@ -1236,6 +3935,12 @@ class CuaSoJob(tk.Toplevel):
             self.job["video_file"] = self.video_var.get().strip()
             self.job["audio_file"] = self.audio_var.get().strip()
             self.job["output_file"] = self.thanh_qua or ""
+            self.job["has_subtitle"] = self.has_subtitle
+            self.job["subtitle_langs"] = list(self.subtitle_langs or [])
+            self.job["subtitle_file"] = self.subtitle_file or ""
+            self.job["subtitle_vi_file"] = self.subtitle_vi_file or ""
+            if getattr(self, "thu_muc_phim", ""):
+                self.job["folder"] = self.thu_muc_phim
             self.job["tu_gop"] = bool(self.tu_gop_var.get())
             self.job["xoa_goc"] = bool(self.xoa_goc_var.get())
             if self.chat_luong_options:
@@ -1268,6 +3973,97 @@ class CuaSoJob(tk.Toplevel):
 
 
     # ---------- khung 1: tải video ----------
+
+    def _nhan_phu_de(self):
+        """Nhan cot phu de: Co (ngon ngu) / Khong co / chua quet (trong)."""
+        if self.has_subtitle is None:
+            return "Chưa kiểm tra phụ đề."
+        if self.has_subtitle:
+            langs = ", ".join(self.subtitle_langs or [])
+            ten = os.path.basename(self.subtitle_file) if self.subtitle_file else ""
+            return "Có phụ đề%s%s" % (
+                (" (%s)" % langs) if langs else "",
+                (" - " + ten) if ten else "")
+        return "Không có phụ đề."
+
+    def _cap_nhat_phu_de_ui(self):
+        try:
+            self.phu_de_var.set(bool(self.has_subtitle))
+            self.phu_de_info_var.set(self._nhan_phu_de())
+        except Exception:
+            pass
+
+    def bam_tai_phu_de(self):
+        """Tai phu de ve CUNG thu muc phim (luong ngam)."""
+        if not self.link_info:
+            messagebox.showerror("Chưa kiểm tra", "Bấm Kiểm tra link trước đã.")
+            return
+        folder = getattr(self, "thu_muc_phim", "") or self.outdir_var.get().strip()
+        if not folder:
+            messagebox.showerror("Thiếu thư mục", "Chưa chọn thư mục lưu.")
+            return
+        ten_viet = self.job.get("title") or ten_phim_tu_ten_file(self.video_var.get().strip()) if self.video_var.get().strip() else (self.job.get("title") or "video")
+        threading.Thread(target=self._tai_phu_de_worker,
+                         args=(self.link_var.get().strip(), folder, ten_viet,
+                               self.cookies_var.get().strip()),
+                         daemon=True).start()
+
+    def _tai_phu_de_worker(self, url, folder, ten_viet, cookies):
+        try:
+            p = tai_phu_de(url, folder, ten_viet, cookies, self.log_threadsafe)
+            self.after_an_toan(0, self._tai_phu_de_xong, p)
+        except Exception as e:
+            self.after_an_toan(0, self._tai_phu_de_loi, str(e))
+
+    def _tai_phu_de_xong(self, path):
+        if path:
+            self.subtitle_file = path
+            self.has_subtitle = True
+            if not self.subtitle_langs:
+                self.subtitle_langs = ["zh"]
+            self._cap_nhat_phu_de_ui()
+            self.ghi_log("Đã tải phụ đề: " + path)
+            self.luu_job_hien_tai()
+            messagebox.showinfo("Đã tải phụ đề", "File phụ đề:\n" + path)
+        else:
+            self.has_subtitle = False
+            self._cap_nhat_phu_de_ui()
+            self.luu_job_hien_tai()
+            messagebox.showinfo("Không có phụ đề",
+                                "Video này không có phụ đề để tải.\nBấm 'Thêm phụ đề...' để tự import file .srt ngoài vào.")
+
+    def _tai_phu_de_loi(self, msg):
+        self.ghi_log("TẢI PHỤ ĐỀ LỖI: " + msg)
+        messagebox.showerror("Tải phụ đề lỗi", msg)
+
+    def bam_them_phu_de(self):
+        """(v7.0, phu luc 1) Them phu de thu cong: chon file .srt ngoai,
+        luu duong dan vao job (khong copy, khong ghi de file goc), cap
+        nhat cot Phu de thanh Co + ten file, roi mo tab Xu ly phu de
+        voi file do da nap san."""
+        p = them_phu_de_tu_ngoai(self.job, self)
+        if not p:
+            return
+        self.subtitle_file = p
+        self.has_subtitle = True
+        self._cap_nhat_phu_de_ui()
+        self.ghi_log("Đã thêm phụ đề ngoài: " + p)
+        self.luu_job_hien_tai()
+        try:
+            self.quan_ly.mo_tab_xu_ly_phu_de(srt_path=p, job=self.job)
+        except Exception as e:
+            messagebox.showinfo("Đã thêm phụ đề", "File: %s\n(Không mở được tab Xử lý phụ đề: %s)" % (p, e))
+
+    def bam_dich_phu_de(self):
+        """Mo tab Xu ly phu de voi file phu de cua job nay (neu co)."""
+        p = self.subtitle_file or ""
+        if p and not os.path.isfile(p):
+            p = ""
+        try:
+            self.quan_ly.mo_tab_xu_ly_phu_de(srt_path=p or None, job=self.job)
+        except Exception as e:
+            messagebox.showerror("Không mở được tab", str(e))
+
     def bam_dan_link(self):
         """(v6.4) Dán link Bilibili từ clipboard vào ô Link phim."""
         try:
@@ -1347,6 +4143,15 @@ class CuaSoJob(tk.Toplevel):
     def _kiem_tra_worker(self, url):
         try:
             info = kiem_tra_link(url, self.cookies_var.get().strip())
+            # (v7.0) Kiem tra phu de bang yt-dlp --list-subs (nguon that),
+            # khong dung nut phu de tren trinh phat web. Loi thi de trong.
+            try:
+                pd = kiem_tra_phu_de(url, self.cookies_var.get().strip())
+                info["has_subtitle"] = pd.get("has_subtitle", False)
+                info["subtitle_langs"] = pd.get("languages", [])
+            except Exception:
+                info["has_subtitle"] = False
+                info["subtitle_langs"] = []
             self.after_an_toan(0, self._kiem_tra_xong, info)
         except Exception as e:
             self.after_an_toan(0, self._kiem_tra_loi, str(e))
@@ -1356,6 +4161,9 @@ class CuaSoJob(tk.Toplevel):
 
     def _kiem_tra_xong(self, info):
         self.link_info = info
+        self.has_subtitle = info.get("has_subtitle", False)
+        self.subtitle_langs = info.get("subtitle_langs", []) or []
+        self._cap_nhat_phu_de_ui()
         options = info["options"]
         self.chat_luong_options = options
         self.cbo_chat_luong["values"] = [o["label"] for o in options]
@@ -1428,10 +4236,11 @@ class CuaSoJob(tk.Toplevel):
         self.job["title"] = ten_viet
         if self.link_info:
             self.link_info["title"] = ten_viet
-        self.title("%s - %s" % (APP_TITLE, ten_viet[:60]))
+        self.title("%s - %s" % (STUDIO_TITLE, ten_viet[:60]))
         self.info_var.set("Tiêu đề: %s" % ten_viet)
         self.status_var.set("Tải xong: %s" % ten_viet)
         self.thanh_qua = out_path
+        self.thu_muc_phim = folder
         self.btn_xem.config(state="normal")
         self.ghi_log("TẢI XONG: %s - %s" % (ten_viet, out_path))
         self.luu_job_hien_tai(status="xong", pct_tai=100, pct_gop=100)
@@ -1484,6 +4293,7 @@ class CuaSoJob(tk.Toplevel):
     def _idm_xong(self, folder, ten_video, ten_audio, tong_dung_luong):
         self.status_var.set("Đã đẩy sang IDM, đang theo dõi tiến độ...")
         self.ghi_log("ĐÃ ĐẨY SANG IDM. IDM đang tải 2 file vào: " + folder)
+        self.thu_muc_phim = folder
         self.job["folder"] = folder
         self.job["tong_dung_luong"] = tong_dung_luong
         self.luu_job_hien_tai(status="dang_tai_idm")
@@ -1752,8 +4562,9 @@ class CuaSoJob(tk.Toplevel):
         self.job["title"] = ten_viet
         if self.link_info:
             self.link_info["title"] = ten_viet
-        self.title("%s - %s" % (APP_TITLE, ten_viet[:60]))
+        self.title("%s - %s" % (STUDIO_TITLE, ten_viet[:60]))
         self.info_var.set("Tiêu đề: %s" % ten_viet)
+        self.thu_muc_phim = folder
         self.ghi_log("GỘP XONG: %s - %s" % (ten_viet, out_path))
         self.thanh_qua = out_path
         self.btn_xem.config(state="normal")
@@ -1789,6 +4600,314 @@ class CuaSoJob(tk.Toplevel):
         messagebox.showerror("Gộp thất bại", msg)
 
 
+
+class CuaSoXuLyPhuDe(tk.Toplevel):
+    """(v7.0) Tab Xu ly phu de: nap file .srt, dich sang tieng Viet bang
+    Muse/GPT/Gemini (key luu local, khong hardcode), xem/sua ban dich,
+    luu DE LEN FILE GOC (co 1 ban .bak) - theo phu luc 4: moi thu cung
+    1 thu muc du an, khong tao file lech ten. Ban dich xong co the
+    nhap lai vao tab nay roi mo tab Doc phu de de chay HoaiMy.
+    Dich chay luong ngam, tien trinh luu vao dich-phu-de-tien-trinh.json
+    trong cung thu muc phim; dong tab khong mat tien trinh."""
+
+    def __init__(self, quan_ly, srt_path=None, job=None):
+        super().__init__(quan_ly)
+        self.quan_ly = quan_ly
+        self.job = job or {}
+        self.title("%s - Xử lý phụ đề" % STUDIO_TITLE)
+        self.geometry("780x720")
+        self.resizable(True, True)
+        cfg = doc_config()
+        self.srt_var = tk.StringVar(value=srt_path or "")
+        self.provider_var = tk.StringVar(value=cfg.get("phu_de_provider") or "Gemini")
+        self.key_var = tk.StringVar(value="")
+        self.the_loai_var = tk.StringVar(value=cfg.get("phu_de_the_loai") or "")
+        self.nhan_vat_var = tk.StringVar(value=cfg.get("phu_de_nhan_vat") or "")
+        self.xung_ho_var = tk.StringVar(value=cfg.get("phu_de_xung_ho") or "")
+        self.boi_canh_var = tk.StringVar(value="")
+        self.status_var = tk.StringVar(value="Chưa nạp file SRT.")
+        self.cac_cau_goc = []
+        self.cac_cau_dich = []
+        self.dang_chay = False
+        self.dung_event = threading.Event()
+        pad = {"padx": 8, "pady": 4}
+        tk.Label(self, text="File SRT:").grid(row=0, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.srt_var).grid(row=0, column=1, sticky="ew", **pad)
+        tk.Button(self, text="Chọn...", command=self._chon_srt).grid(row=0, column=2, **pad)
+        tk.Label(self, text="Nhà cung cấp:").grid(row=1, column=0, sticky="w", **pad)
+        self.cbo_provider = ttk.Combobox(self, textvariable=self.provider_var,
+                                         values=["Gemini", "GPT", "Muse"],
+                                         state="readonly", width=12)
+        self.cbo_provider.grid(row=1, column=1, sticky="w", **pad)
+        self.cbo_provider.bind("<<ComboboxSelected>>", lambda e: self._nap_key())
+        tk.Label(self, text="API key (chỉ lưu local):").grid(row=2, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.key_var, show="*").grid(row=2, column=1, sticky="ew", **pad)
+        tk.Button(self, text="Lưu key", command=self._luu_key).grid(row=2, column=2, **pad)
+        tk.Label(self, text="Thể loại:").grid(row=3, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.the_loai_var).grid(row=3, column=1, sticky="ew", **pad)
+        tk.Label(self, text="Nhân vật:").grid(row=4, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.nhan_vat_var).grid(row=4, column=1, sticky="ew", **pad)
+        tk.Label(self, text="Xưng hô/vai vế:").grid(row=5, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.xung_ho_var).grid(row=5, column=1, sticky="ew", **pad)
+        tk.Label(self, text="Bối cảnh thêm:").grid(row=6, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.boi_canh_var).grid(row=6, column=1, sticky="ew", **pad)
+        hang = tk.Frame(self)
+        hang.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        self.btn_dich = tk.Button(hang, text="DỊCH PHỤ ĐỀ", font=("", 11, "bold"),
+                                  command=self.bam_dich)
+        self.btn_dich.pack(side="left", padx=4)
+        tk.Button(hang, text="Dừng", command=self.bam_dung).pack(side="left", padx=4)
+        tk.Button(hang, text="Xuất prompt + SRT", command=self.bam_xuat_prompt).pack(side="left", padx=4)
+        tk.Button(hang, text="Nhập bản dịch về", command=self.bam_nhap_ban_dich).pack(side="left", padx=4)
+        tk.Button(hang, text="Mở tab Đọc phụ đề", command=self.bam_mo_doc).pack(side="left", padx=4)
+        hang2 = tk.Frame(self)
+        hang2.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
+        tk.Button(hang2, text="LƯU ĐÈ LÊN FILE GỐC (.bak giữ lại)",
+                  font=("", 11, "bold"), command=self.bam_luu_de_goc).pack(side="left", padx=4)
+        tk.Button(hang2, text="Lưu bản _vi riêng", command=self.bam_luu_vi_rieng).pack(side="left", padx=4)
+        self.tien_trinh = ttk.Progressbar(self, mode="determinate", maximum=100)
+        self.tien_trinh.grid(row=9, column=0, columnspan=3, sticky="ew", **pad)
+        tk.Label(self, text="Bản dịch (xem/sửa được trước khi lưu):").grid(
+            row=10, column=0, columnspan=3, sticky="w", **pad)
+        self.txt_dich = scrolledtext.ScrolledText(self, height=16)
+        self.txt_dich.grid(row=11, column=0, columnspan=3, sticky="nsew", **pad)
+        tk.Label(self, textvariable=self.status_var, fg="gray").grid(
+            row=12, column=0, columnspan=3, sticky="ew", **pad)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(11, weight=1)
+        self._nap_key()
+        if srt_path and os.path.isfile(srt_path):
+            self._nap_srt(srt_path)
+
+    def _khoa_key(self, provider):
+        return {"Gemini": "gemini_api_key", "GPT": "openai_api_key",
+                "Muse": "anthropic_api_key"}.get(provider, "gemini_api_key")
+
+    def _nap_key(self):
+        try:
+            cfg = doc_config()
+            self.key_var.set(cfg.get(self._khoa_key(self.provider_var.get()), "") or "")
+        except Exception:
+            pass
+
+    def _luu_key(self):
+        try:
+            cfg = doc_config()
+            cfg[self._khoa_key(self.provider_var.get())] = self.key_var.get().strip()
+            cfg["phu_de_provider"] = self.provider_var.get()
+            cfg["phu_de_the_loai"] = self.the_loai_var.get()
+            cfg["phu_de_nhan_vat"] = self.nhan_vat_var.get()
+            cfg["phu_de_xung_ho"] = self.xung_ho_var.get()
+            luu_config(cfg)
+            self.status_var.set("Đã lưu key (local, không gửi đi đâu).")
+        except Exception as e:
+            messagebox.showerror("Lỗi", str(e))
+
+    def _chon_srt(self):
+        p = filedialog.askopenfilename(title="Chọn file phụ đề .srt",
+                                       filetypes=[("Phụ đề SRT", "*.srt"), ("Mọi file", "*.*")])
+        if p:
+            self.srt_var.set(p)
+            self._nap_srt(p)
+
+    def _nap_srt(self, path):
+        try:
+            self.cac_cau_goc = doc_srt(path)
+            self.cac_cau_dich = []
+            self.txt_dich.delete("1.0", "end")
+            self.status_var.set("Đã nạp %d câu từ %s." % (len(self.cac_cau_goc), os.path.basename(path)))
+        except Exception as e:
+            messagebox.showerror("Lỗi đọc SRT", str(e))
+
+    def _lay_cac_cau_dich_tu_preview(self):
+        text = self.txt_dich.get("1.0", "end")
+        da = doc_srt_text(text)
+        if len(da) == len(self.cac_cau_goc) and da:
+            return da
+        # Preview sua tay khong dung dang SRT: giu timestamp goc, lay
+        # tung dong dich theo thu tu.
+        dong = [d for d in text.splitlines() if d.strip()]
+        out = []
+        for i, goc in enumerate(self.cac_cau_goc):
+            out.append({"chi_so": goc.get("chi_so"), "bat_dau_ms": goc.get("bat_dau_ms"),
+                        "ket_thuc_ms": goc.get("ket_thuc_ms"),
+                        "text": dong[i] if i < len(dong) else goc.get("text")})
+        return out
+
+    def bam_dich(self):
+        if self.dang_chay:
+            return
+        p = self.srt_var.get().strip()
+        if not p or not os.path.isfile(p):
+            messagebox.showerror("Thiếu file", "Chọn file SRT trước đã.")
+            return
+        if not self.cac_cau_goc:
+            self._nap_srt(p)
+        if not self.cac_cau_goc:
+            messagebox.showerror("Lỗi", "Không đọc được câu nào trong file SRT.")
+            return
+        self._luu_key()
+        self.dang_chay = True
+        self.dung_event.clear()
+        self.btn_dich.config(state="disabled")
+        self.status_var.set("Đang dịch phụ đề...")
+        args = (list(self.cac_cau_goc), self.provider_var.get(),
+                self.key_var.get().strip(), self.the_loai_var.get(),
+                self.nhan_vat_var.get(), self.xung_ho_var.get(),
+                self.boi_canh_var.get())
+        threading.Thread(target=self._dich_worker, args=args, daemon=True).start()
+
+    def _dich_worker(self, cac_cau, provider, key, the_loai, nhan_vat, xung_ho, boi_canh):
+        try:
+            ket_qua = dich_srt_theo_cum(
+                cac_cau, provider, key, the_loai, nhan_vat, xung_ho, boi_canh,
+                tien_trinh_cb=lambda pct: self.after(0, lambda: self.tien_trinh.configure(value=pct)),
+                dung_event=self.dung_event)
+            self.after(0, self._dich_xong, ket_qua)
+        except Exception as e:
+            self.after(0, self._dich_loi, str(e))
+
+    def _dich_xong(self, ket_qua):
+        self.dang_chay = False
+        self.btn_dich.config(state="normal")
+        self.cac_cau_dich = ket_qua or []
+        self.tien_trinh.configure(value=100)
+        text = "".join("%d\n%s --> %s\n%s\n\n" % (
+            c.get("chi_so") or 0, dinh_dang_ms_srt(c.get("bat_dau_ms") or 0),
+            dinh_dang_ms_srt(c.get("ket_thuc_ms") or 0), c.get("text") or "")
+            for c in self.cac_cau_dich)
+        self.txt_dich.delete("1.0", "end")
+        self.txt_dich.insert("1.0", text)
+        # Luu tien trinh dich vao cung thu muc phim.
+        try:
+            folder = os.path.dirname(os.path.abspath(self.srt_var.get().strip()))
+            with open(os.path.join(folder, "dich-phu-de-tien-trinh.json"), "w", encoding="utf-8") as f:
+                json.dump({"srt": self.srt_var.get().strip(),
+                           "da_dich": len(self.cac_cau_dich),
+                           "tong_cau": len(self.cac_cau_goc)}, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        self.status_var.set("Đã dịch xong %d/%d câu. Kiểm tra lại trong ô dưới rồi bấm Lưu đè lên file gốc." % (len(self.cac_cau_dich), len(self.cac_cau_goc)))
+
+    def _dich_loi(self, msg):
+        self.dang_chay = False
+        self.btn_dich.config(state="normal")
+        self.status_var.set("Dịch lỗi: " + msg)
+        messagebox.showerror("Dịch phụ đề lỗi", msg)
+
+    def bam_dung(self):
+        self.dung_event.set()
+        self.status_var.set("Đã yêu cầu dừng sau cụm đang dịch.")
+
+    def bam_xuat_prompt(self):
+        """Xuat prompt + SRT ra file text cung thu muc phim de nguoi dung
+        tu gui cho Muse/GPT/Gemini trong chat (khong can key)."""
+        p = self.srt_var.get().strip()
+        if not p or not os.path.isfile(p):
+            messagebox.showerror("Thiếu file", "Chọn file SRT trước đã.")
+            return
+        if not self.cac_cau_goc:
+            self._nap_srt(p)
+        khoi = "".join("%d\n%s --> %s\n%s\n\n" % (
+            c.get("chi_so") or 0, dinh_dang_ms_srt(c.get("bat_dau_ms") or 0),
+            dinh_dang_ms_srt(c.get("ket_thuc_ms") or 0), c.get("text") or "")
+            for c in self.cac_cau_goc)
+        prompt = tao_prompt_dich_phu_de(self.the_loai_var.get(), self.nhan_vat_var.get(),
+                                        self.xung_ho_var.get(), self.boi_canh_var.get(), khoi)
+        out = os.path.join(os.path.dirname(os.path.abspath(p)),
+                           os.path.splitext(os.path.basename(p))[0] + "_prompt.txt")
+        try:
+            with open(out, "w", encoding="utf-8") as f:
+                f.write(prompt)
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(prompt)
+            except Exception:
+                pass
+            messagebox.showinfo("Đã xuất prompt",
+                                "File prompt + SRT:\n%s\n\nĐã copy prompt vào clipboard (nếu được)." % out)
+        except Exception as e:
+            messagebox.showerror("Lỗi", str(e))
+
+    def bam_luu_de_goc(self):
+        """(v7.0, phu luc 4) Luu DE LEN FILE GOC: sao luu 1 ban .bak roi
+        ghi ban dich de len dung file .srt goc, khong tao file lech ten."""
+        p = self.srt_var.get().strip()
+        if not p or not os.path.isfile(p):
+            messagebox.showerror("Thiếu file", "Chọn file SRT trước đã.")
+            return
+        cac = self._lay_cac_cau_dich_tu_preview()
+        if not cac:
+            messagebox.showerror("Chưa có bản dịch", "Bấm Dịch phụ đề trước, hoặc nhập bản dịch về rồi mới lưu.")
+            return
+        bak = sao_luu_bak(p)
+        try:
+            ghi_srt_chung(cac, p)
+            self.cac_cau_dich = cac
+            if self.job:
+                self.job["subtitle_file"] = p
+                self.job["subtitle_vi_file"] = p
+                self.job["has_subtitle"] = True
+                self.job["subtitle_status"] = "da_dich"
+                cap_nhat_job_trong_jobs(self.job)
+            self.status_var.set("Đã lưu đè lên file gốc: %s (bản sao lưu: %s)" % (p, bak or "không có"))
+            messagebox.showinfo("Đã lưu", "Đã ghi đè bản dịch lên file gốc:\n%s\nBản sao lưu: %s" % (p, bak or "(không tạo được)"))
+        except Exception as e:
+            messagebox.showerror("Lỗi lưu", str(e))
+
+    def bam_luu_vi_rieng(self):
+        """Tuy chon: luu them 1 ban <Ten>_vi.srt rieng (khong phai mac dinh)."""
+        p = self.srt_var.get().strip()
+        if not p or not os.path.isfile(p):
+            messagebox.showerror("Thiếu file", "Chọn file SRT trước đã.")
+            return
+        cac = self._lay_cac_cau_dich_tu_preview()
+        if not cac:
+            messagebox.showerror("Chưa có bản dịch", "Bấm Dịch phụ đề trước đã.")
+            return
+        folder = os.path.dirname(os.path.abspath(p))
+        ten = os.path.splitext(os.path.basename(p))[0]
+        # ten da co _vi thi giu nguyen, khong them _vi lan nua
+        if ten.endswith("_vi"):
+            dich = os.path.join(folder, ten + ".srt")
+        else:
+            dich = ten_file_phu_de_vi(folder, ten)
+        try:
+            ghi_srt_chung(cac, dich)
+            messagebox.showinfo("Đã lưu", "File bản dịch riêng:\n" + dich)
+        except Exception as e:
+            messagebox.showerror("Lỗi lưu", str(e))
+
+    def bam_nhap_ban_dich(self):
+        """Nhap ban dich (.srt da dich o ngoai) ve tab nay de chay tiep
+        (luu de / mo tab Doc phu de)."""
+        p = filedialog.askopenfilename(title="Chọn file SRT đã dịch",
+                                       filetypes=[("Phụ đề SRT", "*.srt"), ("Mọi file", "*.*")])
+        if not p:
+            return
+        try:
+            cac = doc_srt(p)
+            self.cac_cau_dich = cac
+            text = "".join("%d\n%s --> %s\n%s\n\n" % (
+                c.get("chi_so") or 0, dinh_dang_ms_srt(c.get("bat_dau_ms") or 0),
+                dinh_dang_ms_srt(c.get("ket_thuc_ms") or 0), c.get("text") or "")
+                for c in cac)
+            self.txt_dich.delete("1.0", "end")
+            self.txt_dich.insert("1.0", text)
+            # Ban dich nhap ve tro thanh ban dich hien tai cua file goc
+            # dang mo (de luu de / doc tiep), khong doi duong dan goc.
+            self.status_var.set("Đã nhập %d câu bản dịch từ %s." % (len(cac), os.path.basename(p)))
+        except Exception as e:
+            messagebox.showerror("Lỗi", str(e))
+
+    def bam_mo_doc(self):
+        p = self.srt_var.get().strip()
+        try:
+            self.quan_ly.mo_tab_doc_phu_de(srt_path=p if p and os.path.isfile(p) else None, job=self.job)
+        except Exception as e:
+            messagebox.showerror("Không mở được tab", str(e))
+
+
 class QuanLy(tk.Tk):
     """(v6) Cửa sổ quản lý: nút + mở cửa sổ job mới, danh sách lịch sử job
     (đọc từ jobs.json), mở lại / xóa job. Cài đặt chung (thư mục lưu,
@@ -1796,10 +4915,12 @@ class QuanLy(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("%s - Quản lý (v%s)" % (APP_TITLE, VERSION))
-        self.geometry("640x520")
+        self.title("%s - Quản lý (v%s)" % (STUDIO_TITLE, VERSION))
+        self.geometry("1020x600")
         self.resizable(True, True)
         self.cua_so_mo = {}
+        self.job_da_chon_id = None
+        self.cua_so_phu_de = {}
 
         cfg = doc_config()
         self.outdir_var = tk.StringVar(
@@ -1820,21 +4941,26 @@ class QuanLy(tk.Tk):
                   command=self.xoa_job_da_chon).pack(side="left", padx=4)
         tk.Button(hang_nut, text="Kiểm tra cập nhật",
                   command=self.bam_kiem_tra_cap_nhat).pack(side="left", padx=4)
+        tk.Button(hang_nut, text="Xử lý phụ đề",
+                  command=lambda: self.mo_tab_xu_ly_phu_de()).pack(side="left", padx=4)
+        tk.Button(hang_nut, text="Đọc phụ đề (HoaiMy)",
+                  command=lambda: self.mo_tab_doc_phu_de()).pack(side="left", padx=4)
 
-        tk.Label(self, text="Lịch sử job (bấm đúp để mở lại cửa sổ):").grid(
+        tk.Label(self, text="Lịch sử dự án (bấm 1 dòng để chọn, bấm đúp để mở lại cửa sổ):").grid(
             row=1, column=0, columnspan=3, sticky="w", **pad)
-        cot = ("ten", "trang_thai", "tai", "gop")
-        self.bang = ttk.Treeview(self, columns=cot, show="headings", height=12)
-        self.bang.heading("ten", text="Video")
-        self.bang.heading("trang_thai", text="Trạng thái")
-        self.bang.heading("tai", text="% tải")
-        self.bang.heading("gop", text="% gộp")
-        self.bang.column("ten", width=300)
-        self.bang.column("trang_thai", width=130)
-        self.bang.column("tai", width=60, anchor="center")
-        self.bang.column("gop", width=60, anchor="center")
-        self.bang.grid(row=2, column=0, columnspan=3, sticky="nsew", **pad)
-        self.bang.bind("<Double-1>", lambda e: self.mo_lai_job_da_chon())
+        khung_bang_ngoai = tk.Frame(self)
+        khung_bang_ngoai.grid(row=2, column=0, columnspan=3, sticky="nsew", **pad)
+        self._canvas_bang = tk.Canvas(khung_bang_ngoai, height=220)
+        sb_bang = ttk.Scrollbar(khung_bang_ngoai, orient="vertical",
+                                command=self._canvas_bang.yview)
+        self.khung_bang = tk.Frame(self._canvas_bang)
+        self.khung_bang.bind("<Configure>", lambda e: self._canvas_bang.configure(
+            scrollregion=self._canvas_bang.bbox("all")))
+        self._canvas_bang.create_window((0, 0), window=self.khung_bang, anchor="nw")
+        self._canvas_bang.configure(yscrollcommand=sb_bang.set)
+        self._canvas_bang.pack(side="left", fill="both", expand=True)
+        sb_bang.pack(side="right", fill="y")
+        self.bang = None
 
         tk.Label(self, text="Thư mục lưu:").grid(row=3, column=0, sticky="w", **pad)
         tk.Entry(self, textvariable=self.outdir_var).grid(
@@ -1880,17 +5006,176 @@ class QuanLy(tk.Tk):
         self.cap_nhat_bang()
 
     def cap_nhat_bang(self):
+        self._xay_bang_du_an()
+
+    def _xay_bang_du_an(self):
+        """(v7.0) Xay lai bang lich su du an: moi dong 1 Frame, cac cot
+        Ten phim (TV) | Link | Trang thai | Duong dan luu thu muc
+        (nut, bam de mo thu muc) | Phu de | nut hanh dong tung dong.
+        Truong nao quet khong ra thi de TRONG, khong doan."""
         try:
-            for item in self.bang.get_children():
-                self.bang.delete(item)
-            for job in doc_jobs():
-                self.bang.insert("", "end", iid=job.get("id"),
-                                 values=(job.get("title") or "(chưa có tên)",
-                                         dinh_dang_trang_thai(job.get("status") or "moi"),
-                                         "%d%%" % (job.get("pct_tai") or 0),
-                                         "%d%%" % (job.get("pct_gop") or 0)))
+            for w in list(self.khung_bang.winfo_children()):
+                w.destroy()
+        except Exception:
+            return
+        tieu_de = ["Tên phim", "Link", "Trạng thái",
+                   "Đường dẫn lưu thư mục", "Phụ đề", "Hành động"]
+        for c, t in enumerate(tieu_de):
+            tk.Label(self.khung_bang, text=t, font=("", 9, "bold"),
+                     anchor="w").grid(row=0, column=c, sticky="w", padx=3, pady=2)
+        for r, job in enumerate(doc_jobs(), start=1):
+            jid = job.get("id") or ""
+            chon = (jid == self.job_da_chon_id)
+            mau = "#dbeafe" if chon else "white"
+            dong = tk.Frame(self.khung_bang, bg=mau, relief="groove", borderwidth=1)
+            dong.grid(row=r, column=0, columnspan=6, sticky="ew", padx=2, pady=1)
+            for c in range(6):
+                dong.grid_columnconfigure(c, weight=1 if c in (0, 1, 3) else 0)
+            ten = job.get("title") or ""
+            link = job.get("link") or ""
+            tt = dinh_dang_trang_thai(job.get("status") or "moi")
+            folder = job.get("folder") or job.get("outdir") or ""
+            if job.get("has_subtitle") is True:
+                ten_srt = os.path.basename(job.get("subtitle_file") or "")
+                pd = "Có" + ((" - " + ten_srt) if ten_srt else "")
+            elif job.get("has_subtitle") is False:
+                pd = "Không"
+            else:
+                pd = ""
+            tk.Label(dong, text=ten, bg=mau, anchor="w", wraplength=220,
+                     justify="left").grid(row=0, column=0, sticky="w", padx=3)
+            tk.Label(dong, text=link, bg=mau, anchor="w", wraplength=220,
+                     justify="left", fg="gray").grid(row=0, column=1, sticky="w", padx=3)
+            tk.Label(dong, text=tt, bg=mau, anchor="w").grid(row=0, column=2, sticky="w", padx=3)
+            tk.Button(dong, text=(folder or "(chưa có)"), anchor="w",
+                      command=lambda j=job: self._mo_thu_muc_du_an(j)).grid(
+                          row=0, column=3, sticky="ew", padx=3)
+            tk.Label(dong, text=pd, bg=mau, anchor="w").grid(row=0, column=4, sticky="w", padx=3)
+            hang = tk.Frame(dong, bg=mau)
+            hang.grid(row=0, column=5, sticky="e", padx=3)
+            if (job.get("status") or "moi") != "xong":
+                tk.Button(hang, text="Làm lại",
+                          command=lambda j=job: self._lam_lai_du_an(j)).pack(side="left", padx=1)
+            if job.get("subtitle_file") and os.path.isfile(job.get("subtitle_file")):
+                tk.Button(hang, text="Dịch phụ đề",
+                          command=lambda j=job: self._dich_phu_de_du_an(j)).pack(side="left", padx=1)
+            else:
+                # (v7.0, phu luc 1) Cot Phu de trong -> nut Them phu de.
+                tk.Button(hang, text="Thêm phụ đề",
+                          command=lambda j=job: self._them_phu_de_du_an(j)).pack(side="left", padx=1)
+            tk.Button(hang, text="Xóa",
+                      command=lambda j=job: self._xoa_du_an(j)).pack(side="left", padx=1)
+            def _chon(e, jid=jid):
+                self.job_da_chon_id = jid
+                self._xay_bang_du_an()
+            def _mo_doi(e, j=job):
+                self.job_da_chon_id = j.get("id")
+                self.mo_cua_so_job(j)
+            dong.bind("<Button-1>", _chon)
+            dong.bind("<Double-1>", _mo_doi)
+            for w in dong.winfo_children():
+                try:
+                    w.bind("<Button-1>", _chon)
+                except Exception:
+                    pass
+
+    def _chon_du_an(self, jid):
+        self.job_da_chon_id = jid
+        self._xay_bang_du_an()
+
+    def _mo_thu_muc_du_an(self, job):
+        folder = (job or {}).get("folder") or (job or {}).get("outdir") or ""
+        if not folder or not os.path.isdir(folder):
+            messagebox.showinfo("Chưa có thư mục", "Dự án này chưa có thư mục lưu.")
+            return
+        if not mo_thu_muc(folder):
+            messagebox.showinfo("Đường dẫn lưu", folder)
+
+    def _lam_lai_du_an(self, job):
+        """Mo lai cua so job de tiep tuc tai/gop (chi dung khi chua xong)."""
+        if not job:
+            return
+        if (job.get("status") or "") == "xong":
+            messagebox.showinfo("Đã xong", "Dự án này đã hoàn thành rồi.")
+            return
+        self.job_da_chon_id = job.get("id")
+        self.mo_cua_so_job(job)
+
+    def _xoa_du_an(self, job):
+        if not job:
+            return
+        if not messagebox.askyesno("Xóa dự án",
+                                   "Xóa dự án này khỏi lịch sử?\n%s"
+                                   % (job.get("title") or "(chưa có tên)")):
+            return
+        try:
+            win = self.cua_so_mo.pop(job.get("id"), None)
+            if win is not None:
+                try:
+                    win.da_dong = True
+                    win.destroy()
+                except Exception:
+                    pass
         except Exception:
             pass
+        jobs = [j for j in doc_jobs() if j.get("id") != job.get("id")]
+        luu_jobs(jobs)
+        if self.job_da_chon_id == job.get("id"):
+            self.job_da_chon_id = None
+        self.cap_nhat_bang()
+
+    def _dich_phu_de_du_an(self, job):
+        p = (job or {}).get("subtitle_file") or ""
+        if not p or not os.path.isfile(p):
+            messagebox.showinfo("Chưa có phụ đề",
+                                "Dự án này chưa có file phụ đề.\nBấm 'Thêm phụ đề' để tự import file .srt ngoài vào.")
+            return
+        self.mo_tab_xu_ly_phu_de(srt_path=p, job=job)
+
+    def _them_phu_de_du_an(self, job):
+        """(v7.0, phu luc 1) Cot Phu de trong -> nut Them phu de: chon
+        file .srt ngoai, luu duong dan vao job (khong copy, khong ghi
+        de file goc), cap nhat cot Phu de thanh Co + ten file, roi mo
+        tab Xu ly phu de voi file do da nap san."""
+        p = them_phu_de_tu_ngoai(job, self)
+        if not p:
+            return
+        self.cap_nhat_bang()
+        self.mo_tab_xu_ly_phu_de(srt_path=p, job=job)
+
+    def mo_tab_xu_ly_phu_de(self, srt_path=None, job=None):
+        """Mo tab Xu ly phu de (Toplevel). Dong tab khong dung luong
+        dich dang chay: worker luu tien trinh vao dich-phu-de-...json."""
+        khoa = srt_path or "moi"
+        win = self.cua_so_phu_de.get(("xuly", khoa))
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_set()
+                return win
+        except Exception:
+            pass
+        win = CuaSoXuLyPhuDe(self, srt_path=srt_path, job=job)
+        self.cua_so_phu_de[("xuly", khoa)] = win
+        return win
+
+    def mo_tab_doc_phu_de(self, srt_path=None, job=None):
+        """Mo tab Doc phu de HoaiMy (Toplevel, lop CuaSoDocPhuDe giu
+        nguyen toan bo logic SRT Reader v1.4). Dong tab khong mat tien
+        trinh: worker luu tien-trinh.json, mo lai bam Tiep tuc."""
+        khoa = srt_path or "moi"
+        win = self.cua_so_phu_de.get(("doc", khoa))
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_set()
+                return win
+        except Exception:
+            pass
+        win = CuaSoDocPhuDe(self, srt_path=srt_path, job=job)
+        self.cua_so_phu_de[("doc", khoa)] = win
+        return win
+
 
     def chon_thu_muc_luu(self):
         folder = filedialog.askdirectory(title="Chọn thư mục lưu mặc định")
@@ -1911,7 +5196,9 @@ class QuanLy(tk.Tk):
         self.luu_cau_hinh()
         job = {"id": str(uuid.uuid4())[:8], "title": "", "link": "",
                "status": "moi", "pct_tai": 0, "pct_gop": 0,
-               "tu_gop": True, "xoa_goc": True}
+               "tu_gop": True, "xoa_goc": True,
+               "has_subtitle": None, "subtitle_langs": [],
+               "subtitle_file": "", "subtitle_vi_file": "", "folder": ""}
         self.mo_cua_so_job(job)
 
     def mo_cua_so_job(self, job):
@@ -1933,11 +5220,10 @@ class QuanLy(tk.Tk):
         self.cap_nhat_bang()
 
     def _job_da_chon(self):
-        sel = self.bang.selection()
-        if not sel:
-            messagebox.showinfo("Chưa chọn", "Chọn một job trong danh sách trước đã.")
+        jid = getattr(self, "job_da_chon_id", None)
+        if not jid:
+            messagebox.showinfo("Chưa chọn", "Chọn một dự án trong bảng lịch sử trước đã.")
             return None
-        jid = sel[0]
         for job in doc_jobs():
             if job.get("id") == jid:
                 return job
@@ -1950,15 +5236,8 @@ class QuanLy(tk.Tk):
 
     def xoa_job_da_chon(self):
         job = self._job_da_chon()
-        if not job:
-            return
-        if not messagebox.askyesno("Xóa job",
-                                   "Xóa job này khỏi lịch sử?\n%s"
-                                   % (job.get("title") or "(chưa có tên)")):
-            return
-        jobs = [j for j in doc_jobs() if j.get("id") != job.get("id")]
-        luu_jobs(jobs)
-        self.cap_nhat_bang()
+        if job:
+            self._xoa_du_an(job)
 
     # ---------- cập nhật (v6.2) ----------
     def bam_kiem_tra_cap_nhat(self):

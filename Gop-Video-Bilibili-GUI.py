@@ -11,6 +11,10 @@ con; thêm nút Kiểm tra cập nhật (tự vá exe từ GitHub Release, cần
 GitHub chỉ-đọc repo này vì repo là private); có bản cài đặt Inno Setup
 (cài vào Program Files\\Chipchipdownload, shortcut Desktop + Start Menu;
 gỡ cài đặt xóa luôn yt-dlp/ffmpeg/config/jobs đã tải về khi chạy).
+v6.3: sửa lỗi SSL khi tự tải yt-dlp/ffmpeg (CERTIFICATE_VERIFY_FAILED trên
+máy CYAN): thử xác minh chứng chỉ trước, chỉ fallback bỏ xác minh khi lỗi
+chứng chỉ; kiểm chứng file tải về bằng --version/-version, file hỏng thì
+xóa và báo lỗi rõ (kèm nguyên nhân diệt virus/proxy có thể chặn chứng chỉ).
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -33,18 +37,20 @@ import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
+import urllib.error
 import urllib.request
 import uuid
 import zipfile
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 APP_TITLE = "Chipchipdownload"
-VERSION = "6.2"
+VERSION = "6.3"
 GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
 GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
                              + GITHUB_REPO + "/releases/latest")
@@ -220,55 +226,141 @@ def tim_ytdlp():
     return None
 
 
+def la_loi_chung_chi_ssl(e):
+    """True nếu ngoại lệ là lỗi xác minh chứng chỉ SSL
+    (CERTIFICATE_VERIFY_FAILED). Nhận cả ssl.SSLCertVerificationError
+    trực tiếp và URLError bọc nó bên trong."""
+    if isinstance(e, ssl.SSLCertVerificationError):
+        return True
+    ly_do = getattr(e, "reason", None)
+    if isinstance(ly_do, ssl.SSLCertVerificationError):
+        return True
+    return "CERTIFICATE_VERIFY_FAILED" in str(e)
+
+
+def mo_url_co_fallback_ssl(req, timeout, log_cb=None):
+    """(v6.3) Mở URL bằng urllib: thử TRƯỚC bằng SSL context mặc định
+    (xác minh chứng chỉ). Chỉ khi lỗi là do xác minh chứng chỉ thất bại
+    (kho chứng chỉ trên máy thiếu/bị chặn, thường do phần mềm diệt
+    virus/proxy) mới thử lại bằng context không xác minh chứng chỉ, và
+    ghi rõ vào log. Không bao giờ bỏ xác minh ngay từ đầu.
+    Trả về response (dùng với with)."""
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except Exception as e:
+        if not la_loi_chung_chi_ssl(e):
+            raise
+        if log_cb:
+            log_cb("Lỗi chứng chỉ SSL, thử lại không xác minh chứng chỉ "
+                   "(kho chứng chỉ trên máy có thể thiếu/bị chặn)...")
+        try:
+            return urllib.request.urlopen(
+                req, timeout=timeout,
+                context=ssl._create_unverified_context())
+        except Exception as e2:
+            raise RuntimeError(
+                "Lỗi chứng chỉ SSL cả khi đã thử bỏ xác minh (%s). "
+                "Nguyên nhân có thể: phần mềm diệt virus hoặc proxy trên "
+                "máy chặn chứng chỉ SSL." % e2)
+
+
+def tai_file_qua_url(url, dest, timeout, log_cb, ten, headers=None):
+    """(v6.3) Tải 1 file qua HTTP(S) về dest, dùng mo_url_co_fallback_ssl
+    (xác minh chứng chỉ trước, fallback bỏ xác minh chỉ khi lỗi chứng chỉ).
+    Raise RuntimeError nếu tải thất bại."""
+    head = {"User-Agent": UA_TRINH_DUYET}
+    if headers:
+        head.update(headers)
+    req = urllib.request.Request(url, headers=head)
+    with mo_url_co_fallback_ssl(req, timeout, log_cb) as resp, open(dest, "wb") as f:
+        shutil.copyfileobj(resp, f)
+
+
+def _xoa_file_quiet(path):
+    """Xóa file, bỏ qua mọi lỗi (dùng khi file tải về bị hỏng)."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def kiem_chung_exe_chay_duoc(path, tham_so, ten):
+    """(v6.3) Chạy file vừa tải với tham số kiểm chứng (vd: --version) để
+    chắc file thật sự dùng được. Trả về dòng đầu tiên của output.
+    Nếu chạy lỗi thì XÓA file hỏng và raise RuntimeError (không để file
+    hỏng nằm lại rồi báo thành công)."""
+    try:
+        r = subprocess.run([path] + tham_so, capture_output=True, text=True,
+                           timeout=60, **chay_ngam_kwargs())
+    except Exception as e:
+        _xoa_file_quiet(path)
+        raise RuntimeError("Không chạy kiểm chứng được %s vừa tải (%s)."
+                           % (ten, e))
+    out = (r.stdout or "").strip()
+    if r.returncode != 0 or not out:
+        _xoa_file_quiet(path)
+        raise RuntimeError("File %s vừa tải không chạy được (kiểm chứng %s "
+                           "thất bại)." % (ten, " ".join(tham_so)))
+    return out.splitlines()[0]
+
+
 def tai_ytdlp_tu_dong(log_cb=None):
     """(v6.1) Tự tải yt-dlp.exe bản mới nhất từ GitHub về cùng thư mục với
-    tool, trả về đường dẫn file. Raise RuntimeError nếu tải thất bại."""
+    tool, trả về đường dẫn file. (v6.3) Tải bằng SSL xác minh trước, fallback
+    bỏ xác minh chỉ khi lỗi chứng chỉ; kiểm chứng bằng --version sau khi tải.
+    Raise RuntimeError nếu tải thất bại."""
     dest = os.path.join(app_dir(), "yt-dlp.exe")
     if log_cb:
         log_cb("Đang tải yt-dlp tự động từ GitHub...")
-    req = urllib.request.Request(YTDLP_DOWNLOAD_URL,
-                                 headers={"User-Agent": UA_TRINH_DUYET})
-    with urllib.request.urlopen(req, timeout=300) as resp, open(dest, "wb") as f:
-        shutil.copyfileobj(resp, f)
+    tai_file_qua_url(YTDLP_DOWNLOAD_URL, dest, 300, log_cb, "yt-dlp")
     if not os.path.isfile(dest) or os.path.getsize(dest) < 100000:
+        _xoa_file_quiet(dest)
         raise RuntimeError("Tải yt-dlp về nhưng file không hợp lệ.")
+    ban = kiem_chung_exe_chay_duoc(dest, ["--version"], "yt-dlp")
     if log_cb:
-        log_cb("Đã tải xong yt-dlp: " + dest)
+        log_cb("Đã tải xong yt-dlp (%s): %s" % (ban, dest))
     return dest
 
 
 def tai_ffmpeg_tu_dong(log_cb=None):
     """(v6.1) Tự tải ffmpeg (bản essentials của gyan.dev) về, giải nén lấy
     ffmpeg.exe + ffprobe.exe ra cùng thư mục với tool. Trả về đường dẫn
-    ffmpeg.exe. Raise RuntimeError nếu tải/giải nén thất bại."""
+    ffmpeg.exe. (v6.3) Tải bằng SSL xác minh trước, fallback bỏ xác minh chỉ
+    khi lỗi chứng chỉ; kiểm chứng ffmpeg/ffprobe bằng -version sau khi giải
+    nén. Raise RuntimeError nếu tải/giải nén thất bại."""
     zip_path = os.path.join(app_dir(), "ffmpeg-essentials.zip")
     if log_cb:
         log_cb("Đang tải ffmpeg tự động từ gyan.dev (khoảng 80MB)...")
-    req = urllib.request.Request(FFMPEG_DOWNLOAD_URL,
-                                 headers={"User-Agent": UA_TRINH_DUYET})
-    with urllib.request.urlopen(req, timeout=600) as resp, open(zip_path, "wb") as f:
-        shutil.copyfileobj(resp, f)
+    tai_file_qua_url(FFMPEG_DOWNLOAD_URL, zip_path, 600, log_cb, "ffmpeg")
     ffmpeg_path = None
     ffprobe_path = None
-    with zipfile.ZipFile(zip_path, "r") as z:
-        for name in z.namelist():
-            base = os.path.basename(name)
-            if base in ("ffmpeg.exe", "ffprobe.exe") and "/bin/" in name.replace("\\", "/"):
-                dest = os.path.join(app_dir(), base)
-                with z.open(name) as src, open(dest, "wb") as out:
-                    shutil.copyfileobj(src, out)
-                if base == "ffmpeg.exe":
-                    ffmpeg_path = dest
-                else:
-                    ffprobe_path = dest
+    try:
+        with zipfile.ZipFile(zip_path, "r") as z:
+            for name in z.namelist():
+                base = os.path.basename(name)
+                if base in ("ffmpeg.exe", "ffprobe.exe") and "/bin/" in name.replace("\\", "/"):
+                    dest = os.path.join(app_dir(), base)
+                    with z.open(name) as src, open(dest, "wb") as out:
+                        shutil.copyfileobj(src, out)
+                    if base == "ffmpeg.exe":
+                        ffmpeg_path = dest
+                    else:
+                        ffprobe_path = dest
+    except zipfile.BadZipFile:
+        _xoa_file_quiet(zip_path)
+        raise RuntimeError("File ffmpeg tải về không phải file zip hợp lệ "
+                           "(có thể tải bị lỗi).")
     try:
         os.remove(zip_path)
     except OSError:
         pass
     if not ffmpeg_path or not os.path.isfile(ffmpeg_path):
         raise RuntimeError("Tải ffmpeg về nhưng không giải nén được ffmpeg.exe.")
+    ban = kiem_chung_exe_chay_duoc(ffmpeg_path, ["-version"], "ffmpeg")
+    if ffprobe_path and os.path.isfile(ffprobe_path):
+        kiem_chung_exe_chay_duoc(ffprobe_path, ["-version"], "ffprobe")
     if log_cb:
-        log_cb("Đã tải xong ffmpeg: " + ffmpeg_path)
+        log_cb("Đã tải xong ffmpeg (%s): %s" % (ban, ffmpeg_path))
     return ffmpeg_path
 
 
@@ -309,12 +401,14 @@ def luu_token_github(token):
 
 
 def goi_github_api(url, token):
-    """GET JSON từ GitHub API (cần token vì repo private)."""
+    """GET JSON từ GitHub API (cần token vì repo private). (v6.3) Dùng
+    mo_url_co_fallback_ssl: xác minh chứng chỉ trước, fallback bỏ xác minh
+    chỉ khi lỗi chứng chỉ (cùng lỗi SSL như khi tự tải yt-dlp)."""
     req = urllib.request.Request(
         url, headers={"Accept": "application/vnd.github+json",
                       "User-Agent": UA_TRINH_DUYET,
                       "Authorization": "token " + token})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with mo_url_co_fallback_ssl(req, 60) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -376,13 +470,11 @@ def tai_ban_moi_va_cap_nhat(tai_url, token, log_cb=None):
     file_moi = os.path.join(thu_muc, ten_exe + ".new")
     if log_cb:
         log_cb("Đang tải bản mới về...")
-    req = urllib.request.Request(
-        tai_url, headers={"Accept": "application/octet-stream",
-                          "User-Agent": UA_TRINH_DUYET,
-                          "Authorization": "token " + token})
-    with urllib.request.urlopen(req, timeout=600) as resp, open(file_moi, "wb") as f:
-        shutil.copyfileobj(resp, f)
+    tai_file_qua_url(tai_url, file_moi, 600, log_cb, "bản mới",
+                     headers={"Accept": "application/octet-stream",
+                              "Authorization": "token " + token})
     if not os.path.isfile(file_moi) or os.path.getsize(file_moi) < 1000000:
+        _xoa_file_quiet(file_moi)
         raise RuntimeError("Tải bản mới về nhưng file không hợp lệ.")
     bat_path = os.path.join(thu_muc, "capnhat.bat")
     with open(bat_path, "w", encoding="utf-8") as f:

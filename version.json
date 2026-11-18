@@ -1,1 +1,1 @@
-{"app":"Chipchipdownload","notes":"Ban cai dat Inno Setup + nut Kiem tra cap nhat trong tool (tu va exe tu GitHub Release, can token GitHub chi-doc repo private).","repo":"Cyandeptrai/gop-video-bilibili","version":"6.2"}
+{"app":"Chipchipdownload","notes":"Sua loi SSL khi tu tai yt-dlp/ffmpeg: thu xac minh chung chi truoc, fallback bo xac minh chi khi loi chung chi; kiem chung file tai ve bang --version/-version.","repo":"Cyandeptrai/gop-video-bilibili","version":"6.3"}

@@ -1,4 +1,4 @@
-; Chipchipdownload - Inno Setup script (v6.2)
+; Chipchipdownload - Inno Setup script (v6.3)
 ; Cai dat tool vao {pf}\Chipchipdownload, tao shortcut Desktop + Start Menu
 ; voi icon ga con. Go cai dat se xoa luon cac thu vien tool da tu tai ve
 ; khi chay (yt-dlp.exe, ffmpeg.exe, ffprobe.exe, config.json, jobs.json).
@@ -6,7 +6,7 @@
 ; va chipchipdownload.ico o cung thu muc repo).
 
 #define MyAppName "Chipchipdownload"
-#define MyAppVersion "6.2"
+#define MyAppVersion "6.3"
 #define MyAppPublisher "Gà Con cho CYAN"
 #define MyAppExeName "Chipchipdownload.exe"
 

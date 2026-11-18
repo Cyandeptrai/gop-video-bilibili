@@ -1,7 +1,7 @@
 # Chipchipdownload
 
 Tool tải + gộp video Bilibili thành 1 video hoàn chỉnh có cả hình lẫn tiếng,
-để đưa vào iContent làm tiếp. Tên hiển thị: **Chipchipdownload** (v6.2).
+để đưa vào iContent làm tiếp. Tên hiển thị: **Chipchipdownload** (v6.3).
 File nguồn vẫn là `Gop-Video-Bilibili-GUI.py` trong repo này.
 
 ## Cài đặt

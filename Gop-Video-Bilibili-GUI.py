@@ -67,6 +67,21 @@ loi. Chua co giong thi chi giam co dinh tieng goc xuong 15% truoc khi
 gop. Khong gioi han thoi luong, chay bang FFmpeg, khong dung AI tach
 giong. File tron xong luu cung thu muc du an. Moi thu cung 1 thu muc
 du an, file goc khong doi.
+v7.3 (LUONG LONG TIENG CHO CAPCUT - CYAN 19/11 04:53): CYAN tu tach
+nen, bo giong (Bo loi kieu CapCut) o ngoai, lay giong tu SRT tao ra,
+chen vao, giu nguyen nen. KHONG can tool gop video - cau them thu
+cong vao CapCut de gop. Tool chi can XUAT RIENG 2 file audio trong
+cung thu muc du an: file nen (tieng goc giam xuong 15%) + file giong
+Viet HoaiMy tu SRT, de cau import vao CapCut. Gop video trong tool
+la tuy chon rieng, khong bat buoc trong luong nay. (v7.3) O "Tai xong
+tu gop luon (IDM)" (tu_gop_var, co tu v6.8, mac dinh BAT, luu theo
+tung job) duoc dat RO ngay duoi nut TAI BANG IDM cho de thay: bo
+tich thi IDM tai xong chi nhan dien 2 file vao muc 2, KHONG tu gop,
+de cau xu ly audio / gop tay trong CapCut sau; tich thi giu hanh vi
+tu gop nhu cu. Luu y: file nen cua tool KHONG phai file da bo giong
+that su (bo giong that su cau tu lam o CapCut); tool chi giam nho
+tieng goc lam nen. Khong dung AI tach giong (da bo theo lenh CYAN
+19/11 04:38).
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -111,7 +126,7 @@ from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 # Cap nhat. Chi co 1 luong cap nhat duy nhat (cua ChipChip).
 APP_TITLE = "Chipchipdownload"
 STUDIO_TITLE = "ChipChipStudio"
-VERSION = "7.2"
+VERSION = "7.3"
 GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
 GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
                              + GITHUB_REPO + "/releases/latest")
@@ -728,23 +743,28 @@ def dich_ten_sang_tieng_viet(ten_goc):
         return ten_goc
 
 
-def ten_phim_tieng_viet(ten_goc):
+def ten_phim_tieng_viet(ten_goc, dich=True):
     """(v6.5) Tên phim dùng cho thư mục / file: tên đã dịch sang tiếng Việt,
-    làm sạch ký tự cấm trên Windows. Thư mục tạo ra trùng tên phim này."""
+    làm sạch ký tự cấm trên Windows. Thư mục tạo ra trùng tên phim này.
+    (v7.3) dich=False (o "Tự dịch tên phim sang tiếng Việt" dang TAT):
+    giu nguyen ten goc, KHONG goi dich - khong ton mang, khong doi ten."""
+    if not dich:
+        return sanitize_ten(ten_goc or "video")
     return sanitize_ten(dich_ten_sang_tieng_viet(ten_goc))
 
 
-def ten_phim_tu_ten_file(duong_file):
+def ten_phim_tu_ten_file(duong_file, dich=True):
     """(v6.8) Lấy tên phim tiếng Việt từ tên file hình: bỏ đuôi file,
     bỏ hậu tố _hinh/_tieng/-hinh/-tieng và (1), (2)... rồi dịch sang
-    tiếng Việt. Vd: 'Tên Trung_hinh.mp4' -> tên phim tiếng Việt."""
+    tiếng Việt. Vd: 'Tên Trung_hinh.mp4' -> tên phim tiếng Việt.
+    (v7.3) dich=False: chi bo hau to, giu nguyen ten goc."""
     ten = os.path.splitext(os.path.basename(duong_file or ""))[0].strip()
     for hau_to in ("_hinh", "_tieng", "-hinh", "-tieng"):
         if ten.lower().endswith(hau_to):
             ten = ten[:-len(hau_to)].strip()
             break
     ten = re.sub(r"\(\d+\)\s*$", "", ten).strip()
-    return ten_phim_tieng_viet(ten)
+    return ten_phim_tieng_viet(ten, dich=dich)
 
 
 
@@ -1216,9 +1236,14 @@ def kiem_tra_link(url, cookies):
     return {"title": title, "duration": duration, "options": options}
 
 
-def tai_va_gop(url, option, cookies, outdir, log, tien_trinh):
+def tai_va_gop(url, option, cookies, outdir, log, tien_trinh,
+               dich_ten=True, tu_gop=True):
     """Tải video+audio theo lựa chọn chất lượng rồi gộp thành 1 mp4 trong
-    <outdir>/<tên video>/<tên video>.mp4. Trả về (đường dẫn file, thư mục)."""
+    <outdir>/<tên video>/<tên video>.mp4. Trả về (đường dẫn file, thư mục).
+    (v7.3) dich_ten=False: ten thu muc / ten file giu nguyen ten goc,
+    khong dich. tu_gop=False (o "Tải yt-dlp xong tự gộp luôn" dang
+    TAT): chi tai video + audio rieng (ten_hinh / ten_tieng), KHONG
+    gop, tra ve (None, folder) de UI nhan dien 2 file vao muc 2."""
     url = chuan_hoa_link_bilibili(url)
     ytdlp = tim_ytdlp()
     ffmpeg = tim_ffmpeg()
@@ -1229,13 +1254,42 @@ def tai_va_gop(url, option, cookies, outdir, log, tien_trinh):
     info = kiem_tra_link(url, cookies)
     # (v6.5) Thư mục trùng tên phim đã dịch sang tiếng Việt.
     # (v6.6) Trùng tên thì tạo thêm thư mục tên + ngày-giờ, tránh ghi đè.
-    ten = ten_phim_tieng_viet(info["title"])
+    ten = ten_phim_tieng_viet(info["title"], dich=dich_ten)
     folder = tao_thu_muc_duy_nhat(outdir, ten)
     try:
         luu_file_thong_tin_phim(folder, info["title"], ten, url,
                                 option.get("label") or "")
     except Exception:
         pass
+    if not tu_gop:
+        # (v7.3) Chi tai rieng, khong gop: video + audio thanh 2 file
+        # rieng ten_hinh / ten_tieng trong cung thu muc du an.
+        log("Chỉ tải riêng video + audio (ô tự gộp yt-dlp đang TẮT), "
+            "không gộp.")
+        for format_id, hau_to in ((option["video_id"], "_hinh"),
+                                  (option.get("audio_id"), "_tieng")):
+            if not format_id:
+                continue
+            out_tmpl = os.path.join(folder, ten + hau_to + ".%(ext)s")
+            cmd = [ytdlp, "--no-playlist", "-f", format_id,
+                   "-o", out_tmpl]
+            if cookies and os.path.isfile(cookies):
+                cmd += ["--cookies", cookies]
+            cmd.append(url)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True,
+                                    errors="replace", bufsize=1,
+                                    **chay_ngam_kwargs())
+            pct_re_rieng = re.compile(r"(\d+(?:\.\d+)?%)")
+            for line in proc.stdout:
+                if pct_re_rieng.search(line) and "download" in line.lower():
+                    tien_trinh(line.strip()[:140])
+            proc.wait()
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    "Tải thất bại (mã %d). Thử lại hoặc kiểm tra link."
+                    % proc.returncode)
+        return None, folder
     out_tmpl = os.path.join(folder, ten + ".%(ext)s")
     if option.get("audio_id"):
         fmt = "%s+%s" % (option["video_id"], option["audio_id"])
@@ -1362,16 +1416,18 @@ def gui_sang_idm(link, referer, cookie_str, local_path, local_filename,
     return True
 
 
-def tai_bang_idm(url, option, cookies, outdir, log):
+def tai_bang_idm(url, option, cookies, outdir, log, dich_ten=True):
     """Lấy link hình + tiếng rồi đẩy cả 2 sang IDM tải nhanh nhiều luồng.
     Trả về (thư mục chứa file, tên file hình, tên file tiếng,
     tổng dung lượng ước tính để theo dõi %).
-    IDM tải xong thì dùng mục Gộp để gộp lại."""
+    IDM tải xong thì dùng mục Gộp để gộp lại.
+    (v7.3) dich_ten=False: ten thu muc / ten file giu nguyen ten goc,
+    khong dich."""
     url = chuan_hoa_link_bilibili(url)
     info = kiem_tra_link(url, cookies)
     # (v6.5) Thư mục trùng tên phim đã dịch sang tiếng Việt.
     # (v6.6) Trùng tên thì tạo thêm thư mục tên + ngày-giờ, tránh ghi đè.
-    ten = ten_phim_tieng_viet(info["title"])
+    ten = ten_phim_tieng_viet(info["title"], dich=dich_ten)
     folder = tao_thu_muc_duy_nhat(outdir, ten)
     # (v6.5) Tạo file text lưu link + tên phim ngay khi bấm TẢI BẰNG IDM,
     # trước khi đẩy sang IDM, nên dù IDM hủy / lỗi thì file vẫn còn.
@@ -1473,26 +1529,41 @@ SIDECHAIN_RELEASE_MS = 1000
 
 
 def quyet_dinh_xu_ly_tieng_goc(tu_giam_tieng_nen=True,
-                              co_giong_viet=False):
-    """(v7.2) Quyet dinh xu ly tieng goc. Tra ve (che_do, ly_do).
-    Chi con 2 duong, KHONG co tach giong AI, KHONG co cua thoi luong:
+                              co_giong_viet=False, giam_15=True):
+    """(v7.2, sua v7.3) Quyet dinh xu ly tieng goc. Tra ve (che_do, ly_do).
+    Chi con 3 duong, KHONG co tach giong AI, KHONG co cua thoi luong:
     - "sidechain": da co file giong Viet + cong tac tu giam dang BAT
-      -> tron bang FFmpeg sidechaincompress.
-    - "giam_15": chua co giong Viet, hoac cong tac dang TAT -> chi
-      giam co dinh tieng goc xuong 15% truoc khi gop."""
+      -> tron bang FFmpeg sidechaincompress. Am luong nen tuy o giam
+      15%: BAT thi nen giam con 15% roi sidechain, TAT thi nen giu
+      nguyen am luong roi sidechain.
+    - "giam_15": chua co giong Viet, hoac cong tac dang TAT, va o
+      giam 15% dang BAT -> chi giam co dinh tieng goc xuong 15%
+      truoc khi gop.
+    - "goc": o giam 15% dang TAT (va khong du dieu kien sidechain)
+      -> giu nguyen am luong goc, khong giam, khong sidechain."""
     if tu_giam_tieng_nen and co_giong_viet:
+        if giam_15:
+            return ("sidechain",
+                    "Da co file giong Viet HoaiMy + cong tac tu giam "
+                    "dang BAT - tron bang FFmpeg sidechaincompress: "
+                    "nhac nen (da giam con 15%) tu nho xuong khi co "
+                    "loi, to lai khi het loi.")
         return ("sidechain",
                 "Da co file giong Viet HoaiMy + cong tac tu giam dang "
-                "BAT - tron bang FFmpeg sidechaincompress: nhac nen tu "
-                "nho xuong khi co loi, to lai khi het loi.")
-    if tu_giam_tieng_nen and not co_giong_viet:
+                "BAT - tron bang FFmpeg sidechaincompress, nhac nen "
+                "GIU NGUYEN am luong (o giam 15% dang TAT).")
+    if giam_15:
+        if tu_giam_tieng_nen and not co_giong_viet:
+            return ("giam_15",
+                    "Cong tac tu giam dang BAT nhung chua co file "
+                    "giong Viet trong thu muc du an nen chi giam co "
+                    "dinh tieng goc xuong 15% truoc khi gop.")
         return ("giam_15",
-                "Cong tac tu giam dang BAT nhung chua co file giong "
-                "Viet trong thu muc du an nen chi giam co dinh tieng "
-                "goc xuong 15% truoc khi gop.")
-    return ("giam_15",
-            "Cong tac tu giam dang TAT - chi giam co dinh tieng goc "
-            "xuong 15% truoc khi gop voi giong Viet.")
+                "Cong tac tu giam dang TAT - chi giam co dinh tieng "
+                "goc xuong 15% truoc khi gop voi giong Viet.")
+    return ("goc",
+            "O 'Giam tieng goc xuong 15%' dang TAT - giu nguyen am "
+            "luong tieng goc, khong giam, khong sidechain.")
 
 
 def lenh_giam_am_luong_15(ffmpeg, video, audio_goc, out_path):
@@ -1508,14 +1579,18 @@ def lenh_giam_am_luong_15(ffmpeg, video, audio_goc, out_path):
 
 def lenh_gop_voi_long_tieng(ffmpeg, video, audio_goc, audio_long, out_path,
                            am_luong_goc=AM_LUONG_TIENG_GOC_KHI_LONG_TIENG,
-                           tu_giam_tieng_nen=True):
-    """(v7.2) Lenh ffmpeg gop hinh + tieng goc + giong Viet long tieng.
+                           tu_giam_tieng_nen=True, giam_15=True):
+    """(v7.2, sua v7.3) Lenh ffmpeg gop hinh + tieng goc + giong Viet long tieng.
     - tu_giam_tieng_nen=True (mac dinh): tieng goc giam con
-      am_luong_goc (0.15 = 15%) roi qua sidechaincompress, lay giong
+      am_luong_goc roi qua sidechaincompress, lay giong
       Viet lam sidechain: nhac nen tu nho xuong khi co loi, to lai
       khi het loi. Sau do amix voi giong Viet o muc day du.
     - False: chi amix don gian (tieng goc giam 15% + giong day du).
+    - giam_15=False (o "Giam tieng goc xuong 15%" dang TAT): am luong
+      goc giu nguyen 1.0 - khong co volume=0.15 trong lenh.
     Tra ve list lenh (chua chay). Khong gioi han thoi luong."""
+    if not giam_15:
+        am_luong_goc = 1.0
     if tu_giam_tieng_nen:
         fc = ("[1:a]volume=%.2f[nen];"
               "[nen][2:a]sidechaincompress=threshold=%.2f:ratio=%d:"
@@ -1559,15 +1634,136 @@ def ten_file_da_tron(thu_muc, ten_viet):
     return ten_file_dau_ra(thu_muc, ten_viet + "_da-tron")
 
 
+def ten_file_audio_khong_trung(thu_muc, ten_goc, ext=".mp3"):
+    """(v7.3) Ten file audio khong trung: ten.mp3, ten(1).mp3..."""
+    ten_goc = sanitize_ten(ten_goc)
+    out = ten_goc + ext
+    n = 1
+    while os.path.exists(os.path.join(thu_muc, out)):
+        out = "%s(%d)%s" % (ten_goc, n, ext)
+        n += 1
+    return out
+
+
+def ten_file_nen_15(thu_muc, ten_viet):
+    """(v7.3) Ten file nen 15%, cung thu muc du an, khong trung:
+    <ten_viet>_nen-15.mp3, <ten_viet>_nen-15(1).mp3..."""
+    return ten_file_audio_khong_trung(thu_muc, ten_viet + "_nen-15",
+                                      ".mp3")
+
+
+def ten_file_nen_goc(thu_muc, ten_viet):
+    """(v7.3) Ten file nen GIU NGUYEN am luong goc (khi o giam 15%
+    dang TAT), cung thu muc du an, khong trung:
+    <ten_viet>_nen-goc.mp3, <ten_viet>_nen-goc(1).mp3..."""
+    return ten_file_audio_khong_trung(thu_muc, ten_viet + "_nen-goc",
+                                      ".mp3")
+
+
+def lenh_xuat_nen_15(ffmpeg, audio_goc, out_path, giam_15=True):
+    """(v7.3) Lenh ffmpeg xuat RIENG file nen: audio goc giam xuong 15%
+    (volume=0.15), CHI XUAT AUDIO (co -vn, khong map video, khong
+    gop video). Output MP3 (libmp3lame, q:a 3). Tra ve list lenh
+    (chua chay).
+    (v7.3) giam_15=False (o "Giam tieng goc xuong 15%" dang TAT):
+    khong co -af volume trong lenh - file nen giu nguyen am luong
+    goc.
+    LUU Y QUAN TRONG: day KHONG phai file da bo giong that su - bo
+    giong that su CYAN tu lam o CapCut (Bo loi); tool chi giam nho
+    tieng goc de lam nen cho CapCut. Khong dung AI tach giong (da
+    bo theo lenh CYAN 19/11 04:38)."""
+    if giam_15:
+        return [ffmpeg, "-y", "-i", audio_goc,
+                "-vn", "-af", "volume=0.15",
+                "-c:a", "libmp3lame", "-q:a", "3", out_path]
+    return [ffmpeg, "-y", "-i", audio_goc,
+            "-vn", "-c:a", "libmp3lame", "-q:a", "3", out_path]
+
+
+def xuat_nen_15(audio_goc, out_path, ffmpeg, log_cb=None, giam_15=True):
+    """(v7.3) Chay lenh xuat file nen 15% (hoac giu nguyen am luong
+    neu o giam 15% dang TAT). Tra ve out_path, raise RuntimeError
+    neu loi (kem stderr cuoi cua ffmpeg). KHONG gop video, KHONG
+    doi file goc."""
+    def _log(s):
+        if log_cb:
+            log_cb(s)
+    if giam_15:
+        _log("Dang xuat file nen (tieng goc giam con 15%%): " + out_path)
+    else:
+        _log("Dang xuat file nen (GIU NGUYEN am luong goc - o giam "
+             "15% dang TAT): " + out_path)
+    cmd = lenh_xuat_nen_15(ffmpeg, audio_goc, out_path, giam_15=giam_15)
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True,
+                          errors="replace", **chay_ngam_kwargs())
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip()[-600:]
+        raise RuntimeError("ffmpeg bao loi khi xuat file nen (ma %d)."
+                           "%s" % (proc.returncode,
+                                   ("\n" + tail) if tail else ""))
+    if not os.path.isfile(out_path):
+        raise RuntimeError("Xuat file nen xong nhung khong thay file.")
+    _log("Da xuat file nen xong: " + out_path)
+    return out_path
+
+
+def xuat_2_file_audio_capcut(audio_goc, thu_muc_du_an, ten_viet, ffmpeg,
+                             log_cb=None, giam_15=True):
+    """(v7.3) XUAT RIENG 2 file audio cho CapCut (luong long tieng
+    CYAN chot 19/11 04:53), KHONG gop video:
+    (1) file nen: audio goc giam xuong 15% -> <ten_viet>_nen-15.mp3
+        (cung thu muc du an; KHONG phai file da bo giong that su -
+        bo giong that su CYAN tu lam o CapCut). Neu o giam 15%
+        dang TAT thi file nen giu nguyen am luong goc, ten
+        <ten_viet>_nen-goc.mp3.
+    (2) file giong Viet HoaiMy tu SRT: tim file <ten_viet>_long-tieng
+        .mp3 (hoac bat ky file *long-tieng*.mp3) trong cung thu muc
+        du an - file nay tab Doc phu de HoaiMy da xuat san.
+    Tra ve (duong_nen, duong_giong). Raise RuntimeError "CHUA_CO_
+    GIONG_VIET: ..." neu chua co file giong (UI se mo tab Doc phu
+    de voi SRT cua du an de cau tao giong); raise RuntimeError neu
+    thieu file goc / thieu ffmpeg / ffmpeg loi. Khong doi file goc,
+    khong gop video, khong dung AI tach giong."""
+    def _log(s):
+        if log_cb:
+            log_cb(s)
+    if not ffmpeg or not os.path.isfile(ffmpeg):
+        raise RuntimeError("Chua tim thay ffmpeg (can de xuat file nen).")
+    if not audio_goc or not os.path.isfile(audio_goc):
+        raise RuntimeError("Khong tim thay file Audio (tieng) goc.")
+    if not thu_muc_du_an or not os.path.isdir(thu_muc_du_an):
+        raise RuntimeError("Khong tim thay thu muc du an.")
+    dub = tim_file_long_tieng(thu_muc_du_an, ten_viet)
+    if not dub:
+        raise RuntimeError(
+            "CHUA_CO_GIONG_VIET: chua co file giong Viet HoaiMy "
+            "(*long-tieng.mp3) trong thu muc du an. Mo tab Doc phu de "
+            "de tao giong tu SRT roi xuat lai.")
+    _log("File giong Viet da co trong thu muc du an: " + dub)
+    if giam_15:
+        ten_nen = ten_file_nen_15(thu_muc_du_an, ten_viet)
+    else:
+        ten_nen = ten_file_nen_goc(thu_muc_du_an, ten_viet)
+    nen_path = os.path.join(thu_muc_du_an, ten_nen)
+    xuat_nen_15(audio_goc, nen_path, ffmpeg, log_cb=log_cb,
+                giam_15=giam_15)
+    _log("Da xuat xong 2 file audio rieng (cho CapCut):\n- Nen: "
+         + nen_path + "\n- Giong Viet: " + dub)
+    return (nen_path, dub)
+
+
 def gop_voi_long_tieng(video, audio_goc, audio_long, out_path, ffmpeg,
-                      tien_trinh_cb, tu_giam_tieng_nen=True, log_cb=None):
-    """(v7.2) Gop hinh + tieng goc (da xu ly) + giong Viet long tieng.
+                      tien_trinh_cb, tu_giam_tieng_nen=True, log_cb=None,
+                      giam_15=True):
+    """(v7.2, sua v7.3) Gop hinh + tieng goc (da xu ly) + giong Viet long tieng.
     - Doc thoi luong bang ffprobe CHI DE GHI LOG, khong dung de chan.
     - Neu cong tac tu giam BAT va co file giong Viet: sidechaincompress
       (nhac nen tu nho xuong khi co loi, to lai khi het loi).
     - Con lai: tieng goc giam xuong 15% (volume=0.15) roi amix voi
-      giong Viet. KHONG co tach giong AI. Tra ve out_path, raise
-      RuntimeError neu loi (ke ca stderr cuoi cua ffmpeg de bao loi)."""
+      giong Viet - TRU KHI o giam 15% dang TAT thi giu nguyen am
+      luong goc ("goc"). KHONG co tach giong AI. Tra ve out_path,
+      raise RuntimeError neu loi (ke ca stderr cuoi cua ffmpeg)."""
     def _log(s):
         if log_cb:
             log_cb(s)
@@ -1580,14 +1776,16 @@ def gop_voi_long_tieng(video, audio_goc, audio_long, out_path, ffmpeg,
         _log("Khong do duoc thoi luong video - van xu ly binh thuong "
              "(khong gioi han 15 phut).")
     co_giong = bool(audio_long) and os.path.isfile(audio_long)
-    che_do, ly_do = quyet_dinh_xu_ly_tieng_goc(tu_giam_tieng_nen, co_giong)
+    che_do, ly_do = quyet_dinh_xu_ly_tieng_goc(tu_giam_tieng_nen, co_giong,
+                                              giam_15)
     _log("Xu ly tieng goc: " + ly_do)
     if not co_giong:
         raise RuntimeError("Khong tim thay file giong Viet (MP3 long "
                            "tieng) de gop cung.")
     cmd = lenh_gop_voi_long_tieng(ffmpeg, video, audio_goc, audio_long,
                                   out_path,
-                                  tu_giam_tieng_nen=(che_do == "sidechain"))
+                                  tu_giam_tieng_nen=(che_do == "sidechain"),
+                                  giam_15=giam_15)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True,
                             errors="replace", bufsize=1,
@@ -1617,6 +1815,9 @@ def gop_voi_long_tieng(video, audio_goc, audio_long, out_path, ffmpeg,
     if che_do == "sidechain":
         _log("Da tron xong (sidechain): nhac nen tu giam khi co loi. "
              "File: " + out_path)
+    elif che_do == "goc":
+        _log("Da tron xong (giu nguyen am luong goc - o giam 15% dang "
+             "TAT). File: " + out_path)
     else:
         _log("Da tron xong (giam tieng goc co dinh 15%%). File: "
              + out_path)
@@ -3923,6 +4124,15 @@ class CuaSoJob(tk.Toplevel):
         # Khong gioi han thoi luong. Khong dung AI tach giong.
         self.tu_giam_tieng_nen_var = tk.BooleanVar(
             value=job.get("tu_giam_tieng_nen", True))
+        # (v7.3) NGUYEN TAC CYAN 19/11 04:56 - moi buoc tu dong deu
+        # phai co cong tac bat/tat rieng, tat la bo qua han buoc do,
+        # luu theo tung job. Mac dinh BAT het (giu hanh vi cu).
+        self.giam_15_var = tk.BooleanVar(value=job.get("giam_15", True))
+        self.tu_gop_ytdlp_var = tk.BooleanVar(
+            value=job.get("tu_gop_ytdlp", True))
+        self.dich_ten_var = tk.BooleanVar(value=job.get("dich_ten", True))
+        self.tu_nhan_dien_var = tk.BooleanVar(
+            value=job.get("tu_nhan_dien", True))
 
         ten = job.get("title") or "Video mới"
         self.title("%s - %s" % (STUDIO_TITLE, ten[:60]))
@@ -3966,26 +4176,34 @@ class CuaSoJob(tk.Toplevel):
                                  command=self.bam_idm, state="disabled")
         self.btn_idm.grid(row=3, column=0, columnspan=4, sticky="ew", **pad)
 
+        # (v7.3) O "Tai xong tu gop luon (IDM)" (tu_gop_var, co tu
+        # v6.8, mac dinh BAT, luu theo tung job) dat RO NGAY DUOI
+        # nut TAI BANG IDM cho de thay, khong de o cuoi khung lan
+        # voi phan yt-dlp. Bo tich: IDM tai xong chi nhan dien 2
+        # file vao muc 2, KHONG tu gop, de cau xu ly audio / gop tay
+        # trong CapCut sau. Tich: giu hanh vi tu gop nhu cu.
+        self.chk_tu_gop = tk.Checkbutton(
+            f1, text="Tải xong tự gộp luôn (IDM)",
+            variable=self.tu_gop_var,
+            command=self.luu_job_hien_tai)
+        self.chk_tu_gop.grid(row=4, column=0, columnspan=4, sticky="w",
+                             **pad)
         tk.Label(f1, text="File cookies.txt (để tải 1080p):").grid(
-            row=4, column=0, sticky="w", **pad)
+            row=5, column=0, sticky="w", **pad)
         tk.Entry(f1, textvariable=self.cookies_var).grid(
-            row=4, column=1, sticky="ew", **pad)
+            row=5, column=1, sticky="ew", **pad)
         tk.Button(f1, text="Chọn...",
-                  command=self.chon_cookies).grid(row=4, column=2,
+                  command=self.chon_cookies).grid(row=5, column=2,
                                                   columnspan=2, **pad)
         tk.Label(f1, text="Không có cookies thì thường chỉ tải được 480p.",
-                 fg="gray").grid(row=5, column=0, columnspan=4, sticky="w", **pad)
-        tk.Label(f1, text="% tải (IDM):").grid(row=6, column=0, sticky="w", **pad)
+                 fg="gray").grid(row=6, column=0, columnspan=4, sticky="w", **pad)
+        tk.Label(f1, text="% tải (IDM):").grid(row=7, column=0, sticky="w", **pad)
         self.tien_trinh_idm = ttk.Progressbar(f1, mode="determinate",
                                               maximum=100)
-        self.tien_trinh_idm.grid(row=6, column=1, sticky="ew", **pad)
+        self.tien_trinh_idm.grid(row=7, column=1, sticky="ew", **pad)
         self.phan_tram_var = tk.StringVar(value="")
         tk.Label(f1, textvariable=self.phan_tram_var, fg="gray").grid(
-            row=6, column=2, columnspan=2, sticky="w", **pad)
-        tk.Checkbutton(f1, text="Tải xong tự gộp luôn",
-                       variable=self.tu_gop_var,
-                       command=self.luu_job_hien_tai).grid(
-            row=7, column=0, columnspan=4, sticky="w", **pad)
+            row=7, column=2, columnspan=2, sticky="w", **pad)
         # (v7.0) Phu de: checkbox tick = co phu de (theo yt-dlp
         # --list-subs), khong tick = khong co. Khong dung nut phu de
         # tren trinh phat web lam can cu.
@@ -4002,10 +4220,47 @@ class CuaSoJob(tk.Toplevel):
         tk.Button(f1, text="Dịch phụ đề", command=self.bam_dich_phu_de).grid(
             row=9, column=0, columnspan=4, sticky="ew", **pad)
 
+        # ---- (v7.3) Khung: Các bước tự động - NGUYEN TAC CYAN 19/11
+        # 04:56: moi buoc tu dong deu phai co cong tac bat/tat rieng,
+        # tat la bo qua han buoc do. CapCut da xu ly tach giong +
+        # chinh lon nho roi, tool chi de audio SRT len thoi - neu
+        # tool tu lam het cac buoc do thi se trung, khong duoc.
+        # O "Tai xong tu gop luon (IDM)" vua o ngay duoi nut TAI BANG
+        # IDM o tren (de thay khi tai IDM) vua co mat o day (cung 1
+        # bien tu_gop_var, tich/bỏ o cho nao cung dong bo).
+        f_auto = tk.LabelFrame(
+            self, text=" Các bước tự động (tắt là bỏ qua bước đó) ",
+            padx=8, pady=6)
+        f_auto.grid(row=1, column=0, columnspan=3, sticky="ew", **pad)
+        tk.Checkbutton(f_auto, text="Tải xong tự gộp luôn (IDM)",
+                       variable=self.tu_gop_var,
+                       command=self.luu_job_hien_tai).pack(anchor="w")
+        tk.Checkbutton(f_auto, text="Tải yt-dlp xong tự gộp luôn",
+                       variable=self.tu_gop_ytdlp_var,
+                       command=self.luu_job_hien_tai).pack(anchor="w")
+        tk.Checkbutton(f_auto, text="Tự dịch tên phim sang tiếng Việt",
+                       variable=self.dich_ten_var,
+                       command=self.luu_job_hien_tai).pack(anchor="w")
+        tk.Checkbutton(f_auto, text="Giảm tiếng gốc xuống 15%",
+                       variable=self.giam_15_var,
+                       command=self.luu_job_hien_tai).pack(anchor="w")
+        tk.Checkbutton(
+            f_auto, text="Tự giảm tiếng nền khi có lời (FFmpeg sidechain)",
+            variable=self.tu_giam_tieng_nen_var,
+            command=self.luu_job_hien_tai).pack(anchor="w")
+        tk.Checkbutton(f_auto, text="Gộp xong tự xóa 2 file gốc",
+                       variable=self.xoa_goc_var,
+                       command=self.luu_job_hien_tai).pack(anchor="w")
+        tk.Checkbutton(f_auto, text="Tự nhận diện 2 file sau khi tải",
+                       variable=self.tu_nhan_dien_var,
+                       command=self.luu_job_hien_tai).pack(anchor="w")
+        tk.Label(f_auto, text="Tắt ô nào là bỏ qua hẳn bước đó. CapCut đã xử lý tách giọng + chỉnh lớn nhỏ rồi — tool chỉ đè audio SRT lên thôi.",
+                 fg="gray", wraplength=640, justify="left").pack(anchor="w")
+
         # ---- Khung 2: Gộp 2 file đã có ----
         f2 = tk.LabelFrame(self, text=" 2. Gộp 2 file đã có (tải bằng IDM) ",
                            padx=8, pady=6)
-        f2.grid(row=1, column=0, columnspan=3, sticky="ew", **pad)
+        f2.grid(row=2, column=0, columnspan=3, sticky="ew", **pad)
         f2.grid_columnconfigure(1, weight=1)
 
         tk.Label(f2, text="Video (hình):").grid(row=0, column=0, sticky="w", **pad)
@@ -4035,56 +4290,57 @@ class CuaSoJob(tk.Toplevel):
         self.phan_tram_gop_var = tk.StringVar(value="")
         tk.Label(f2, textvariable=self.phan_tram_gop_var, fg="gray").grid(
             row=4, column=2, sticky="w", **pad)
-        tk.Checkbutton(f2, text="Gộp xong tự xóa 2 file gốc (hình + tiếng)",
-                       variable=self.xoa_goc_var,
-                       command=self.luu_job_hien_tai).grid(
-            row=5, column=0, columnspan=3, sticky="w", **pad)
-
-        # (v7.2) Tu giam tieng nen khi co loi (FFmpeg sidechain):
-        # co MP3 giong Viet HoaiMy trong thu muc du an thi nhac nen
-        # tu nho xuong khi co loi, to lai khi het loi; chua co giong
-        # thi chi giam co dinh tieng goc xuong 15%. Khong gioi han
-        # thoi luong, khong dung AI tach giong.
-        tk.Checkbutton(f2, text="Tự giảm tiếng nền khi có lời (FFmpeg sidechain – không giới hạn thời lượng)",
-                       variable=self.tu_giam_tieng_nen_var,
-                       command=self.luu_job_hien_tai).grid(
-            row=6, column=0, columnspan=3, sticky="w", **pad)
-        tk.Label(f2, text="Đã có MP3 giọng Việt trong thư mục dự án thì nhạc nền tự nhỏ xuống khi có lời, to lại khi hết lời. Chưa có giọng thì chỉ giảm cố định tiếng gốc xuống 15%.",
-                 fg="gray", wraplength=640, justify="left").grid(
-            row=7, column=0, columnspan=3, sticky="w", **pad)
+        # (v7.3) Cac o tich buoc tu dong (xoa file goc, tu giam tieng
+        # nen sidechain) da doi vao khung "Cac buoc tu dong" o tren,
+        # khong de rieng o khung 2 nua - de cau bat/tat 1 cho duy nhat.
         self.btn_gop_long = tk.Button(
             f2, text="GỘP VỚI LỒNG TIẾNG VIỆT (giảm tiếng gốc 15%)",
             font=("", 11, "bold"), command=self.bam_gop_voi_long_tieng)
-        self.btn_gop_long.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
+        self.btn_gop_long.grid(row=5, column=0, columnspan=3, sticky="ew", **pad)
         self.btn_tron = tk.Button(
             f2, text="TRỘN TIẾNG NỀN + LỒNG TIẾNG (tự giảm khi có lời)",
             font=("", 11, "bold"), command=self.bam_tron_tieng_nen)
-        self.btn_tron.grid(row=9, column=0, columnspan=3, sticky="ew", **pad)
+        self.btn_tron.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
+
+        # (v7.3) XUAT 2 FILE AUDIO RIENG CHO CAPCUT - luong long tieng
+        # CYAN chot 19/11 04:53: cau tu tach nen / bo giong o CapCut,
+        # tool chi xuat file nen (giam 15%) + file giong Viet HoaiMy
+        # tu SRT, de cau import vao CapCut. KHONG gop video o day;
+        # gop video trong tool (nut Gop / Tron o tren) la tuy chon
+        # rieng, khong bat buoc trong luong nay.
+        self.btn_xuat_audio = tk.Button(
+            f2, text="XUẤT 2 FILE AUDIO RIÊNG (cho CapCut)",
+            font=("", 11, "bold"), command=self.bam_xuat_audio_capcut)
+        self.btn_xuat_audio.grid(row=7, column=0, columnspan=3,
+                                 sticky="ew", **pad)
+        tk.Label(f2, text="Cậu tự tách nền / bỏ giọng ở CapCut; tool chỉ xuất file nền (giảm 15%) + file giọng Việt để cậu import vào CapCut. Gộp video trong tool là tùy chọn riêng.",
+                 fg="gray", wraplength=640, justify="left").grid(
+            row=8, column=0, columnspan=3, sticky="w", **pad)
 
         self.btn_xem = tk.Button(f2, text="XEM THÀNH QUẢ",
                                  font=("", 11, "bold"),
                                  command=self.bam_xem,
                                  state="normal" if self.thanh_qua else "disabled")
-        self.btn_xem.grid(row=10, column=0, columnspan=3, sticky="ew", **pad)
+        self.btn_xem.grid(row=9, column=0, columnspan=3, sticky="ew", **pad)
 
         # ---- Thư mục lưu ----
-        tk.Label(self, text="Thư mục lưu:").grid(row=2, column=0, sticky="w", **pad)
+        tk.Label(self, text="Thư mục lưu:").grid(row=3, column=0, sticky="w", **pad)
         tk.Entry(self, textvariable=self.outdir_var).grid(
-            row=2, column=1, sticky="ew", **pad)
+            row=3, column=1, sticky="ew", **pad)
         tk.Button(self, text="Chọn...",
-                  command=self.chon_thu_muc_luu).grid(row=2, column=2, **pad)
+                  command=self.chon_thu_muc_luu).grid(row=3, column=2, **pad)
         tk.Label(self, text="Video hoàn thiện lưu vào "
                  "<thư mục lưu>\\<tên video>\\<tên video>.mp4",
-                 fg="gray").grid(row=3, column=0, columnspan=3, sticky="w", **pad)
+                 fg="gray").grid(row=4, column=0, columnspan=3, sticky="w", **pad)
 
         # ---- Log + trạng thái ----
         self.log = scrolledtext.ScrolledText(self, height=12, state="disabled")
-        self.log.grid(row=4, column=0, columnspan=3, sticky="nsew", **pad)
+        self.log.grid(row=5, column=0, columnspan=3, sticky="nsew", **pad)
         tk.Label(self, textvariable=self.status_var, fg="gray",
-                 anchor="w").grid(row=5, column=0, columnspan=3, sticky="ew", **pad)
+                 anchor="w").grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
 
         self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(4, weight=1)
+        self.grid_rowconfigure(5, weight=1)
         self.protocol("WM_DELETE_WINDOW", self.dong_cua_so)
 
         self.ghi_log("Cửa sổ job: %s" % ten)
@@ -4175,6 +4431,11 @@ class CuaSoJob(tk.Toplevel):
             self.job["tu_gop"] = bool(self.tu_gop_var.get())
             self.job["xoa_goc"] = bool(self.xoa_goc_var.get())
             self.job["tu_giam_tieng_nen"] = bool(self.tu_giam_tieng_nen_var.get())
+            # (v7.3) Luu trang thai cac cong tac buoc tu dong theo job.
+            self.job["giam_15"] = bool(self.giam_15_var.get())
+            self.job["tu_gop_ytdlp"] = bool(self.tu_gop_ytdlp_var.get())
+            self.job["dich_ten"] = bool(self.dich_ten_var.get())
+            self.job["tu_nhan_dien"] = bool(self.tu_nhan_dien_var.get())
             if self.chat_luong_options:
                 self.job["chat_luong_options"] = self.chat_luong_options
             if self.link_info and self.link_info.get("duration") is not None:
@@ -4234,7 +4495,7 @@ class CuaSoJob(tk.Toplevel):
         if not folder:
             messagebox.showerror("Thiếu thư mục", "Chưa chọn thư mục lưu.")
             return
-        ten_viet = self.job.get("title") or ten_phim_tu_ten_file(self.video_var.get().strip()) if self.video_var.get().strip() else (self.job.get("title") or "video")
+        ten_viet = self.job.get("title") or ten_phim_tu_ten_file(self.video_var.get().strip(), dich=self.dich_ten_var.get()) if self.video_var.get().strip() else (self.job.get("title") or "video")
         threading.Thread(target=self._tai_phu_de_worker,
                          args=(self.link_var.get().strip(), folder, ten_viet,
                                self.cookies_var.get().strip()),
@@ -4453,7 +4714,9 @@ class CuaSoJob(tk.Toplevel):
         try:
             out_path, folder = tai_va_gop(url, option, cookies, outdir,
                                           self.log_threadsafe,
-                                          self.status_threadsafe)
+                                          self.status_threadsafe,
+                                          dich_ten=self.dich_ten_var.get(),
+                                          tu_gop=self.tu_gop_ytdlp_var.get())
             self.after_an_toan(0, self._tai_xong, out_path, folder)
         except Exception as e:
             self.after_an_toan(0, self._tai_loi, str(e))
@@ -4462,6 +4725,40 @@ class CuaSoJob(tk.Toplevel):
                 0, lambda: self.btn_tai.config(state="normal"))
 
     def _tai_xong(self, out_path, folder):
+        # (v7.3) out_path=None = chi tai rieng video + audio (o tu gop
+        # yt-dlp dang TAT): nhan dien 2 file vao muc 2, KHONG tu gop,
+        # de cau xu ly / gop tay trong CapCut sau.
+        if out_path is None:
+            ten_viet = os.path.basename(folder.rstrip(os.sep))
+            self.job["title"] = ten_viet
+            if self.link_info:
+                self.link_info["title"] = ten_viet
+            self.title("%s - %s" % (STUDIO_TITLE, ten_viet[:60]))
+            self.info_var.set("Tiêu đề: %s" % ten_viet)
+            self.thu_muc_phim = folder
+            self.status_var.set("Tải xong (chỉ tải riêng, chưa gộp).")
+            self.ghi_log("TẢI XONG (CHỈ TẢI RIÊNG, KHÔNG TỰ GỘP - ô "
+                         "'Tải yt-dlp xong tự gộp luôn' đang BỎ tích): "
+                         + folder)
+            try:
+                video, audio = nhan_dien_cap(
+                    folder, self.ffmpeg or tim_ffmpeg())
+                self.video_var.set(os.path.join(folder, video))
+                self.audio_var.set(os.path.join(folder, audio))
+                self.ghi_log("Đã nhận diện 2 file: %s + %s"
+                             % (video, audio))
+            except Exception as e:
+                self.ghi_log("Chưa nhận diện được cặp file trong thư "
+                             "mục, chọn tay ở mục 2: %s" % e)
+            self.luu_job_hien_tai(status="cho_gop", pct_tai=100)
+            messagebox.showinfo(
+                "Tải xong rồi!",
+                "Đã tải xong 2 file riêng vào:\n%s\n\nÔ 'Tải yt-dlp "
+                "xong tự gộp luôn' đang BỎ tích nên tool KHÔNG tự "
+                "gộp - để cậu xử lý audio / gộp tay trong CapCut "
+                "sau, hoặc bấm GỘP VIDEO ở mục 2 để gộp lại."
+                % folder)
+            return
         # (v6.8) Tên phim tiếng Việt = tên file thành phẩm, hiển thị rõ
         # trong tool rồi mới báo hoàn thành.
         ten_viet = os.path.splitext(os.path.basename(out_path))[0]
@@ -4513,7 +4810,8 @@ class CuaSoJob(tk.Toplevel):
     def _idm_worker(self, url, option, cookies, outdir):
         try:
             folder, ten_video, ten_audio, tong_dung_luong = tai_bang_idm(
-                url, option, cookies, outdir, self.log_threadsafe)
+                url, option, cookies, outdir, self.log_threadsafe,
+                dich_ten=self.dich_ten_var.get())
             self.after_an_toan(0, self._idm_xong, folder, ten_video, ten_audio,
                                tong_dung_luong)
         except Exception as e:
@@ -4529,12 +4827,24 @@ class CuaSoJob(tk.Toplevel):
         self.job["folder"] = folder
         self.job["tong_dung_luong"] = tong_dung_luong
         self.luu_job_hien_tai(status="dang_tai_idm")
-        messagebox.showinfo(
-            "Đã đẩy sang IDM",
-            "IDM đang tải 2 file:\n- %s\n- %s\n\nTool sẽ hiện %% tải ở thanh "
-            "tiến độ bên dưới (quét dung lượng cả thư mục nên đếm đủ cả "
-            "file tiếng), tải xong sẽ tự nhận diện và tự gộp luôn."
-            % (ten_video, ten_audio or "(chỉ có hình)"))
+        if self.tu_gop_var.get():
+            thong_bao_idm = ("IDM đang tải 2 file:\n- %s\n- %s\n\nTool sẽ "
+                             "hiện %% tải ở thanh tiến độ bên dưới (quét "
+                             "dung lượng cả thư mục nên đếm đủ cả file "
+                             "tiếng), tải xong sẽ tự nhận diện và tự gộp "
+                             "luôn (ô 'Tải xong tự gộp luôn (IDM)' đang "
+                             "tích)." % (ten_video,
+                                         ten_audio or "(chỉ có hình)"))
+        else:
+            thong_bao_idm = ("IDM đang tải 2 file:\n- %s\n- %s\n\nTool sẽ "
+                             "hiện %% tải ở thanh tiến độ bên dưới (quét "
+                             "dung lượng cả thư mục nên đếm đủ cả file "
+                             "tiếng). Tải xong chỉ nhận diện 2 file vào "
+                             "mục 2, KHÔNG tự gộp (ô 'Tải xong tự gộp "
+                             "luôn (IDM)' đang BỎ tích) - để cậu xử lý "
+                             "audio / gộp tay trong CapCut sau."
+                             % (ten_video, ten_audio or "(chỉ có hình)"))
+        messagebox.showinfo("Đã đẩy sang IDM", thong_bao_idm)
         self.dang_theo_doi_idm = True
         threading.Thread(target=self._theo_doi_idm,
                          args=(folder, tong_dung_luong),
@@ -4590,6 +4900,24 @@ class CuaSoJob(tk.Toplevel):
     def _tai_idm_hoan_tat(self, folder):
         self.tien_trinh_idm["value"] = 100
         self.phan_tram_var.set("100%")
+        # (v7.3) O tu nhan dien TAT thi bo qua han buoc nhan dien:
+        # khong dien 2 file vao muc 2, de cau chon tay.
+        if not self.tu_nhan_dien_var.get():
+            self.status_var.set(
+                "Tải xong. Chưa nhận diện file (ô tự nhận diện đang TẮT).")
+            self.ghi_log("Ô 'Tự nhận diện 2 file sau khi tải' đang BỎ "
+                         "tích nên KHÔNG tự nhận diện - chọn tay 2 file "
+                         "ở mục 2 (nút Chọn file... / Chọn thư mục chứa "
+                         "2 file), hoặc xử lý audio / gộp tay trong "
+                         "CapCut sau.")
+            self.luu_job_hien_tai(status="cho_gop", pct_tai=100)
+            messagebox.showinfo(
+                "Tải xong rồi!",
+                "IDM đã tải xong.\nÔ 'Tự nhận diện 2 file sau khi "
+                "tải' đang BỎ tích nên tool KHÔNG tự nhận diện - "
+                "chọn tay 2 file ở mục 2 để gộp, hoặc xử lý audio / "
+                "gộp tay trong CapCut sau.")
+            return
         # Tự nhận diện cặp file thực tế trong thư mục (kể cả .m4s).
         try:
             video, audio = nhan_dien_cap(folder, self.ffmpeg or tim_ffmpeg())
@@ -4610,12 +4938,19 @@ class CuaSoJob(tk.Toplevel):
         self.ghi_log("IDM TẢI XONG. Đã nhận diện: %s + %s" % (video, audio))
         self.luu_job_hien_tai(status="cho_gop", pct_tai=100)
         if self.tu_gop_var.get():
-            self.ghi_log("Tự gộp luôn (đã bật 'Tải xong tự gộp luôn').")
+            self.ghi_log("Tự gộp luôn (đã bật 'Tải xong tự gộp luôn (IDM)').")
             self.bam_gop()
         else:
+            self.ghi_log("Ô 'Tải xong tự gộp luôn (IDM)' đang BỎ tích nên "
+                         "KHÔNG tự gộp - 2 file đã nhận diện vào mục 2, để "
+                         "cậu xử lý audio / gộp tay trong CapCut sau.")
             messagebox.showinfo("Tải xong rồi!",
-                                "IDM đã tải xong 2 file.\nBấm GỘP VIDEO ở mục 2 "
-                                "để gộp lại.")
+                                "IDM đã tải xong 2 file, đã nhận diện vào "
+                                "mục 2.\nÔ 'Tải xong tự gộp luôn (IDM)' "
+                                "đang BỎ tích nên tool KHÔNG tự gộp - để "
+                                "cậu xử lý audio / gộp tay trong CapCut "
+                                "sau, hoặc bấm GỘP VIDEO ở mục 2 để gộp "
+                                "lại.")
 
     def _tai_idm_dung(self, msg):
         self.dang_theo_doi_idm = False
@@ -4763,7 +5098,7 @@ class CuaSoJob(tk.Toplevel):
             # (v6.8) Dịch tên phim sang tiếng Việt trước khi gộp: lấy
             # tên từ file hình, bỏ _hinh/_tieng rồi dịch. File thành
             # phẩm đặt đúng tên phim tiếng Việt đó, không còn _hinh.
-            ten_viet = ten_phim_tu_ten_file(video)
+            ten_viet = ten_phim_tu_ten_file(video, dich=self.dich_ten_var.get())
             # Nếu 2 file đã nằm sẵn trong thư mục phim thì gộp ra ngay
             # trong thư mục đó; còn file lẻ thì tạo thư mục tên phim.
             thu_muc_video = os.path.dirname(os.path.abspath(video))
@@ -4791,7 +5126,7 @@ class CuaSoJob(tk.Toplevel):
     def _gop_xong(self, out_path, folder, video, audio, ten_viet=None):
         # (v6.8) Hiển thị tên phim tiếng Việt trong tool rồi mới báo xong.
         if not ten_viet:
-            ten_viet = ten_phim_tu_ten_file(video)
+            ten_viet = ten_phim_tu_ten_file(video, dich=self.dich_ten_var.get())
         self.job["title"] = ten_viet
         if self.link_info:
             self.link_info["title"] = ten_viet
@@ -4870,7 +5205,7 @@ class CuaSoJob(tk.Toplevel):
     def _gop_long_tieng_worker(self, video, audio, dub, outdir, ffmpeg,
                              da_tron=False):
         try:
-            ten_viet = ten_phim_tu_ten_file(video)
+            ten_viet = ten_phim_tu_ten_file(video, dich=self.dich_ten_var.get())
             thu_muc_video = os.path.dirname(os.path.abspath(video))
             if thu_muc_video != os.path.abspath(outdir):
                 folder = thu_muc_video
@@ -4884,7 +5219,8 @@ class CuaSoJob(tk.Toplevel):
                 lambda pct: self.after_an_toan(
                     0, self._cap_nhat_tien_trinh_gop, pct),
                 tu_giam_tieng_nen=bool(self.tu_giam_tieng_nen_var.get()),
-                log_cb=self.log_threadsafe)
+                log_cb=self.log_threadsafe,
+                giam_15=bool(self.giam_15_var.get()))
             self.after_an_toan(0, self._gop_xong, out_path, folder,
                                video, audio, ten_viet)
         except Exception as e:
@@ -4913,7 +5249,7 @@ class CuaSoJob(tk.Toplevel):
             messagebox.showerror("Thiếu file", "Chưa chọn file Audio (tiếng).")
             return
         thu_muc_video = os.path.dirname(os.path.abspath(video))
-        ten_viet = ten_phim_tu_ten_file(video)
+        ten_viet = ten_phim_tu_ten_file(video, dich=self.dich_ten_var.get())
         dub = tim_file_long_tieng(thu_muc_video, ten_viet)
         if dub:
             self.ghi_log("Tìm thấy file giọng Việt trong thư mục dự án: "
@@ -4950,6 +5286,116 @@ class CuaSoJob(tk.Toplevel):
         self.ghi_log("GỘP THẤT BẠI: " + msg)
         self.luu_job_hien_tai(status="loi")
         messagebox.showerror("Gộp thất bại", msg)
+
+    # ---------- (v7.3) Xuat 2 file audio rieng cho CapCut ----------
+    def bam_xuat_audio_capcut(self):
+        """(v7.3) Nut XUAT 2 FILE AUDIO RIENG (cho CapCut): xuat vao
+        CUNG thu muc du an (cung thu muc voi file Audio goc):
+        (1) file nen <ten_viet>_nen-15.mp3 (tieng goc giam con 15% -
+        KHONG phai file da bo giong that su, bo giong that su CYAN
+        tu lam o CapCut); (2) file giong Viet HoaiMy tu SRT
+        (<ten_viet>_long-tieng.mp3) ma tab Doc phu de da xuat san.
+        KHONG gop video o day. Chay luong ngam. Neu chua co file
+        giong Viet thi mo tab Doc phu de voi SRT cua du an de cau
+        tao giong, khong crash, khong tu gop video."""
+        audio = self.audio_var.get().strip()
+        video = self.video_var.get().strip()
+        if not audio or not os.path.isfile(audio):
+            messagebox.showerror("Thiếu file",
+                                 "Chưa chọn file Audio (tiếng).")
+            return
+        ffmpeg = self.ffmpeg or tim_ffmpeg()
+        if not ffmpeg:
+            messagebox.showerror("Thiếu ffmpeg",
+                                 "Chưa tìm thấy ffmpeg (cần để xuất "
+                                 "file nền).")
+            return
+        self.ffmpeg = ffmpeg
+        nguon_ten = video if video and os.path.isfile(video) else audio
+        ten_viet = ten_phim_tu_ten_file(nguon_ten)
+        thu_muc_du_an = os.path.dirname(os.path.abspath(audio))
+        self.luu_cau_hinh()
+        self.btn_xuat_audio.config(state="disabled")
+        self.status_var.set("Đang xuất 2 file audio riêng cho CapCut...")
+        self.ghi_log("Đang xuất 2 file audio riêng (cho CapCut) vào: "
+                     + thu_muc_du_an)
+        self.luu_job_hien_tai(status="dang_xuat_audio")
+        threading.Thread(target=self._xuat_audio_capcut_worker,
+                         args=(audio, thu_muc_du_an, ten_viet, ffmpeg),
+                         daemon=True).start()
+
+    def _xuat_audio_capcut_worker(self, audio, thu_muc_du_an, ten_viet,
+                                  ffmpeg):
+        try:
+            nen_path, dub_path = xuat_2_file_audio_capcut(
+                audio, thu_muc_du_an, ten_viet, ffmpeg,
+                log_cb=self.log_threadsafe,
+                giam_15=bool(self.giam_15_var.get()))
+            self.after_an_toan(0, self._xuat_audio_xong,
+                               nen_path, dub_path)
+        except Exception as e:
+            msg = str(e)
+            if msg.startswith("CHUA_CO_GIONG_VIET"):
+                self.after_an_toan(
+                    0, self._xuat_audio_thieu_giong,
+                    thu_muc_du_an, ten_viet, msg)
+            else:
+                self.after_an_toan(0, self._xuat_audio_loi, msg)
+        finally:
+            self.after_an_toan(
+                0, lambda: self.btn_xuat_audio.config(state="normal"))
+
+    def _xuat_audio_xong(self, nen_path, dub_path):
+        self.status_var.set("Đã xuất xong 2 file audio riêng (cho CapCut).")
+        self.ghi_log("ĐÃ XUẤT XONG 2 FILE AUDIO RIÊNG (cho CapCut):\n"
+                     "- File nền: " + nen_path + "\n"
+                     "- File giọng Việt: " + dub_path + "\n"
+                     "File nền: tiếng gốc giảm còn 15% - phần bỏ giọng "
+                     "cậu tự làm ở CapCut. Import cả 2 file này vào "
+                     "CapCut để gộp tay.")
+        self.luu_job_hien_tai(status="xuat_audio_xong")
+        messagebox.showinfo(
+            "Đã xuất xong 2 file audio",
+            "Đã xuất xong 2 file audio riêng vào cùng thư mục dự án:\n"
+            "- File nền: %s\n- File giọng Việt: %s\n\n"
+            "File nền: tiếng gốc giảm còn 15%% - phần bỏ giọng cậu "
+            "tự làm ở CapCut. Import cả 2 file này vào CapCut để "
+            "gộp tay." % (nen_path, dub_path))
+
+    def _xuat_audio_thieu_giong(self, thu_muc_du_an, ten_viet, msg):
+        """(v7.3) Chua co file giong Viet: mo tab Doc phu de HoaiMy
+        voi SRT cua du an da nap san de cau tao giong, roi xuat lai.
+        Khong crash, khong tu gop video."""
+        self.status_var.set("Chưa có file giọng Việt - mở tab Đọc phụ đề.")
+        self.ghi_log("CHƯA CÓ FILE GIỌNG VIỆT: " + msg + "\n"
+                     "Đã mở tab Đọc phụ đề (HoaiMy) với phụ đề của dự "
+                     "án để cậu tạo giọng Việt, xong bấm lại nút "
+                     "XUẤT 2 FILE AUDIO RIÊNG.")
+        self.luu_job_hien_tai(status="cho_giong_viet")
+        srt_path = None
+        for ung_vien in (self.subtitle_vi_file, self.subtitle_file):
+            if ung_vien and os.path.isfile(ung_vien):
+                srt_path = ung_vien
+                break
+        if srt_path is None:
+            for ung_vien in (ten_file_phu_de_vi(thu_muc_du_an, ten_viet),
+                             ten_file_phu_de(thu_muc_du_an, ten_viet)):
+                if os.path.isfile(ung_vien):
+                    srt_path = ung_vien
+                    break
+        self.quan_ly.mo_tab_doc_phu_de(srt_path=srt_path, job=self.job)
+        messagebox.showinfo(
+            "Chưa có file giọng Việt",
+            "Chưa có file giọng Việt HoaiMy (*long-tieng.mp3) trong "
+            "thư mục dự án.\n\nĐã mở tab Đọc phụ đề (HoaiMy) với phụ "
+            "đề của dự án để cậu tạo giọng Việt, xong bấm lại nút "
+            "XUẤT 2 FILE AUDIO RIÊNG (cho CapCut).")
+
+    def _xuat_audio_loi(self, msg):
+        self.status_var.set("Xuất audio thất bại.")
+        self.ghi_log("XUẤT AUDIO THẤT BẠI: " + msg)
+        self.luu_job_hien_tai(status="loi")
+        messagebox.showerror("Xuất audio thất bại", msg)
 
 
 
@@ -5549,6 +5995,8 @@ class QuanLy(tk.Tk):
         job = {"id": str(uuid.uuid4())[:8], "title": "", "link": "",
                "status": "moi", "pct_tai": 0, "pct_gop": 0,
                "tu_gop": True, "xoa_goc": True,
+               "giam_15": True, "tu_gop_ytdlp": True,
+               "dich_ten": True, "tu_nhan_dien": True,
                "has_subtitle": None, "subtitle_langs": [],
                "subtitle_file": "", "subtitle_vi_file": "", "folder": ""}
         self.mo_cua_so_job(job)

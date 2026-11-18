@@ -4,6 +4,8 @@ GỘP VIDEO BILIBILI - bản giao diện (build thành file .exe trên Windows)
 v6: nhiều cửa sổ (mỗi cửa sổ 1 video), lịch sử job lưu lại để mở lại,
 tự gộp sau khi IDM tải xong, theo dõi % tải (quét thư mục) + % gộp từng
 cửa sổ, gộp xong tự xóa 2 file gốc.
+v6.1: thiếu yt-dlp/ffmpeg thì tool hỏi và tự tải về (yt-dlp từ GitHub,
+ffmpeg bản essentials từ gyan.dev) thay vì chỉ báo link tải tay.
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -31,12 +33,19 @@ import sys
 import threading
 import time
 import tkinter as tk
+import urllib.request
 import uuid
+import zipfile
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 APP_TITLE = "Gộp Video Bilibili"
 FFMPEG_LINK = "https://www.gyan.dev/ffmpeg/builds/"
 YTDLP_LINK = "https://github.com/yt-dlp/yt-dlp/releases"
+# Link tải trực tiếp (bản mới nhất) để tool tự tải khi thiếu thư viện.
+YTDLP_DOWNLOAD_URL = ("https://github.com/yt-dlp/yt-dlp/releases/"
+                      "latest/download/yt-dlp.exe")
+FFMPEG_DOWNLOAD_URL = ("https://www.gyan.dev/ffmpeg/builds/"
+                       "ffmpeg-release-essentials.zip")
 # .m4s: file tiếng IDM tải về thực tế có đuôi .m4s (không phải .m4a như đặt
 # tên lúc đẩy sang IDM) - v5 chỉ nhận .m4a nên tracker không đếm được file
 # tiếng, chỉ hiện 77%. v6 nhận cả .m4s.
@@ -197,6 +206,58 @@ def tim_ytdlp():
                 if f.lower() in ("yt-dlp.exe", "yt-dlp"):
                     return os.path.join(root, f)
     return None
+
+
+def tai_ytdlp_tu_dong(log_cb=None):
+    """(v6.1) Tự tải yt-dlp.exe bản mới nhất từ GitHub về cùng thư mục với
+    tool, trả về đường dẫn file. Raise RuntimeError nếu tải thất bại."""
+    dest = os.path.join(app_dir(), "yt-dlp.exe")
+    if log_cb:
+        log_cb("Đang tải yt-dlp tự động từ GitHub...")
+    req = urllib.request.Request(YTDLP_DOWNLOAD_URL,
+                                 headers={"User-Agent": UA_TRINH_DUYET})
+    with urllib.request.urlopen(req, timeout=300) as resp, open(dest, "wb") as f:
+        shutil.copyfileobj(resp, f)
+    if not os.path.isfile(dest) or os.path.getsize(dest) < 100000:
+        raise RuntimeError("Tải yt-dlp về nhưng file không hợp lệ.")
+    if log_cb:
+        log_cb("Đã tải xong yt-dlp: " + dest)
+    return dest
+
+
+def tai_ffmpeg_tu_dong(log_cb=None):
+    """(v6.1) Tự tải ffmpeg (bản essentials của gyan.dev) về, giải nén lấy
+    ffmpeg.exe + ffprobe.exe ra cùng thư mục với tool. Trả về đường dẫn
+    ffmpeg.exe. Raise RuntimeError nếu tải/giải nén thất bại."""
+    zip_path = os.path.join(app_dir(), "ffmpeg-essentials.zip")
+    if log_cb:
+        log_cb("Đang tải ffmpeg tự động từ gyan.dev (khoảng 80MB)...")
+    req = urllib.request.Request(FFMPEG_DOWNLOAD_URL,
+                                 headers={"User-Agent": UA_TRINH_DUYET})
+    with urllib.request.urlopen(req, timeout=600) as resp, open(zip_path, "wb") as f:
+        shutil.copyfileobj(resp, f)
+    ffmpeg_path = None
+    ffprobe_path = None
+    with zipfile.ZipFile(zip_path, "r") as z:
+        for name in z.namelist():
+            base = os.path.basename(name)
+            if base in ("ffmpeg.exe", "ffprobe.exe") and "/bin/" in name.replace("\\", "/"):
+                dest = os.path.join(app_dir(), base)
+                with z.open(name) as src, open(dest, "wb") as out:
+                    shutil.copyfileobj(src, out)
+                if base == "ffmpeg.exe":
+                    ffmpeg_path = dest
+                else:
+                    ffprobe_path = dest
+    try:
+        os.remove(zip_path)
+    except OSError:
+        pass
+    if not ffmpeg_path or not os.path.isfile(ffmpeg_path):
+        raise RuntimeError("Tải ffmpeg về nhưng không giải nén được ffmpeg.exe.")
+    if log_cb:
+        log_cb("Đã tải xong ffmpeg: " + ffmpeg_path)
+    return ffmpeg_path
 
 
 def file_co_video(ffprobe, path):
@@ -848,16 +909,50 @@ class CuaSoJob(tk.Toplevel):
             messagebox.showerror("Thiếu link", "Dán link Bilibili vào trước đã.")
             return
         if not tim_ytdlp():
-            messagebox.showerror(
-                "Không tìm thấy yt-dlp",
-                "Chưa tìm thấy yt-dlp trên máy.\n\n"
-                "Hãy tải yt-dlp tại:\n" + YTDLP_LINK + "\n"
-                "Tải file yt-dlp.exe, để vào cùng thư mục với tool này rồi thử lại.")
+            # (v6.1) Chưa có yt-dlp thì hỏi tải tự động thay vì chỉ báo link.
+            if messagebox.askyesno(
+                    "Chưa có yt-dlp",
+                    "Máy chưa có yt-dlp (cần để đọc link + tải video).\n\n"
+                    "Bấm Có để tool tự tải yt-dlp bản mới nhất về (để cùng "
+                    "thư mục với tool), xong tự kiểm tra link lại.\n"
+                    "Bấm Không để tự tải tay tại:\n" + YTDLP_LINK):
+                self.btn_kiem_tra.config(state="disabled")
+                self.info_var.set("Đang tải yt-dlp tự động, chờ một chút...")
+                threading.Thread(target=self._tai_ytdlp_roi_kiem_tra,
+                                 args=(url,), daemon=True).start()
+            else:
+                messagebox.showerror(
+                    "Không tìm thấy yt-dlp",
+                    "Chưa tìm thấy yt-dlp trên máy.\n\n"
+                    "Hãy tải yt-dlp tại:\n" + YTDLP_LINK + "\n"
+                    "Tải file yt-dlp.exe, để vào cùng thư mục với tool này rồi thử lại.")
             return
         self.btn_kiem_tra.config(state="disabled")
         self.info_var.set("Đang đọc thông tin video, chờ một chút...")
         threading.Thread(target=self._kiem_tra_worker,
                          args=(url,), daemon=True).start()
+
+    def _tai_ytdlp_roi_kiem_tra(self, url):
+        try:
+            tai_ytdlp_tu_dong(self.log_threadsafe)
+            self.after_an_toan(0, self._kiem_tra_xong_tai_ytdlp, url)
+        except Exception as e:
+            self.after_an_toan(0, self._tai_ytdlp_loi, str(e))
+        finally:
+            self.after_an_toan(
+                0, lambda: self.btn_kiem_tra.config(state="normal"))
+
+    def _kiem_tra_xong_tai_ytdlp(self, url):
+        self.ghi_log("Đã có yt-dlp, kiểm tra link lại.")
+        self.bam_kiem_tra()
+
+    def _tai_ytdlp_loi(self, msg):
+        self.info_var.set("Tải yt-dlp thất bại: " + msg)
+        messagebox.showerror(
+            "Tải yt-dlp thất bại",
+            "Không tải tự động được yt-dlp:\n" + msg + "\n\n"
+            "Hãy tải tay tại:\n" + YTDLP_LINK + "\n"
+            "Tải file yt-dlp.exe, để vào cùng thư mục với tool này rồi thử lại.")
 
     def _kiem_tra_worker(self, url):
         try:
@@ -1166,12 +1261,25 @@ class CuaSoJob(tk.Toplevel):
             return
         ffmpeg = self.ffmpeg or tim_ffmpeg()
         if not ffmpeg:
-            messagebox.showerror(
-                "Không tìm thấy ffmpeg",
-                "Chưa tìm thấy ffmpeg trên máy.\n\n"
-                "Hãy tải ffmpeg tại:\n" + FFMPEG_LINK + "\n"
-                "Giải nén, copy file ffmpeg.exe vào cùng thư mục với tool "
-                "này rồi bấm GỘP VIDEO lại.")
+            # (v6.1) Chưa có ffmpeg thì hỏi tải tự động thay vì chỉ báo link.
+            if messagebox.askyesno(
+                    "Chưa có ffmpeg",
+                    "Máy chưa có ffmpeg (cần để gộp hình + tiếng).\n\n"
+                    "Bấm Có để tool tự tải ffmpeg về (khoảng 80MB, để cùng "
+                    "thư mục với tool), xong tự gộp lại.\n"
+                    "Bấm Không để tự tải tay tại:\n" + FFMPEG_LINK):
+                self.btn_gop.config(state="disabled")
+                self.ghi_log("Đang tải ffmpeg tự động, chờ một chút...")
+                threading.Thread(target=self._tai_ffmpeg_roi_gop,
+                                 args=(video, audio, outdir),
+                                 daemon=True).start()
+            else:
+                messagebox.showerror(
+                    "Không tìm thấy ffmpeg",
+                    "Chưa tìm thấy ffmpeg trên máy.\n\n"
+                    "Hãy tải ffmpeg tại:\n" + FFMPEG_LINK + "\n"
+                    "Giải nén, copy file ffmpeg.exe vào cùng thư mục với tool "
+                    "này rồi bấm GỘP VIDEO lại.")
             return
         self.ffmpeg = ffmpeg
         self.luu_cau_hinh()
@@ -1184,6 +1292,29 @@ class CuaSoJob(tk.Toplevel):
         threading.Thread(target=self._gop_worker,
                          args=(video, audio, outdir, ffmpeg),
                          daemon=True).start()
+
+    def _tai_ffmpeg_roi_gop(self, video, audio, outdir):
+        try:
+            ffmpeg = tai_ffmpeg_tu_dong(self.log_threadsafe)
+            self.ffmpeg = ffmpeg
+            self.after_an_toan(0, self._gop_sau_tai_ffmpeg, video, audio, outdir)
+        except Exception as e:
+            self.after_an_toan(0, self._tai_ffmpeg_loi, str(e))
+        finally:
+            self.after_an_toan(
+                0, lambda: self.btn_gop.config(state="normal"))
+
+    def _gop_sau_tai_ffmpeg(self, video, audio, outdir):
+        self.ghi_log("Đã có ffmpeg, gộp lại.")
+        self.bam_gop()
+
+    def _tai_ffmpeg_loi(self, msg):
+        messagebox.showerror(
+            "Tải ffmpeg thất bại",
+            "Không tải tự động được ffmpeg:\n" + msg + "\n\n"
+            "Hãy tải tay tại:\n" + FFMPEG_LINK + "\n"
+            "Giải nén, copy file ffmpeg.exe vào cùng thư mục với tool này "
+            "rồi bấm GỘP VIDEO lại.")
 
     def _gop_worker(self, video, audio, outdir, ffmpeg):
         try:
@@ -1246,7 +1377,7 @@ class QuanLy(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title(APP_TITLE + " - Quản lý (v6)")
+        self.title(APP_TITLE + " - Quản lý (v6.1)")
         self.geometry("640x520")
         self.resizable(True, True)
         self.cua_so_mo = {}

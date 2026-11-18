@@ -15,6 +15,19 @@ v6.3: sửa lỗi SSL khi tự tải yt-dlp/ffmpeg (CERTIFICATE_VERIFY_FAILED tr
 máy CYAN): thử xác minh chứng chỉ trước, chỉ fallback bỏ xác minh khi lỗi
 chứng chỉ; kiểm chứng file tải về bằng --version/-version, file hỏng thì
 xóa và báo lỗi rõ (kèm nguyên nhân diệt virus/proxy có thể chặn chứng chỉ).
+v6.4: thêm nút "Dán" ở phần Kiểm tra link (khung 1): dán link Bilibili từ
+clipboard vào ô Link phim, tự tách lấy URL đầu tiên nếu clipboard có thêm
+chữ khác, rồi focus lại ô link để bấm Kiểm tra link ngay.
+v6.5: bấm TẢI BẰNG IDM thì tạo ngay 1 file text trong thư mục của phim,
+lưu link Bilibili + tên phim gốc + tên phim dịch sang tiếng Việt, ghi ngay
+trước khi đẩy sang IDM nên dù IDM hủy / lỗi thì file vẫn còn. Từ nay tên
+thư mục trùng tên phim đã dịch sang tiếng Việt (thư mục = <thư mục lưu>/
+<tên phim tiếng Việt>), dịch bằng Google Translate miễn phí, lỗi mạng thì
+giữ nguyên tên gốc.
+v6.6: thư mục trùng tên thì không ghi đè: tạo thêm thư mục mới tên
+"<tên phim tiếng Việt> - YYYY-MM-DD HH-MM-SS" (ngày-giờ, không dùng dấu
+":" vì Windows cấm, tên đã làm sạch ký tự cấm và cắt tối đa 100 ký tự).
+Nếu vẫn trùng (cùng giây) thì thêm (1), (2)... cho đến khi hết trùng.
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -44,13 +57,14 @@ import threading
 import time
 import tkinter as tk
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import zipfile
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 APP_TITLE = "Chipchipdownload"
-VERSION = "6.3"
+VERSION = "6.6"
 GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
 GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
                              + GITHUB_REPO + "/releases/latest")
@@ -591,6 +605,82 @@ def sanitize_ten(name):
     return name[:100]
 
 
+def dich_ten_sang_tieng_viet(ten_goc):
+    """(v6.5) Dịch tên phim sang tiếng Việt bằng Google Translate miễn phí
+    (không cần API key). Lỗi mạng / không dịch được thì giữ nguyên tên gốc.
+    Trả về tên đã dịch (đã strip), hoặc tên gốc nếu dịch thất bại."""
+    ten_goc = (ten_goc or "").strip()
+    if not ten_goc:
+        return "video"
+    # Tên đã là tiếng Việt / không có chữ Trung thì khỏi dịch.
+    if not re.search(r"[\u4e00-\u9fff]", ten_goc):
+        return ten_goc
+    try:
+        query = urllib.parse.urlencode({
+            "client": "gtx", "sl": "auto", "tl": "vi", "dt": "t",
+            "q": ten_goc,
+        })
+        req = urllib.request.Request(
+            "https://translate.googleapis.com/translate_a/single?" + query,
+            headers={"User-Agent": UA_TRINH_DUYET})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            du_lieu = json.loads(resp.read().decode("utf-8", "replace"))
+        dich = "".join(
+            phan[0] for phan in (du_lieu[0] or []) if phan and phan[0])
+        dich = dich.strip()
+        return dich or ten_goc
+    except Exception:
+        return ten_goc
+
+
+def ten_phim_tieng_viet(ten_goc):
+    """(v6.5) Tên phim dùng cho thư mục / file: tên đã dịch sang tiếng Việt,
+    làm sạch ký tự cấm trên Windows. Thư mục tạo ra trùng tên phim này."""
+    return sanitize_ten(dich_ten_sang_tieng_viet(ten_goc))
+
+
+def luu_file_thong_tin_phim(folder, ten_goc, ten_viet, url, chat_luong=""):
+    """(v6.5) Tạo 1 file text trong thư mục của phim, lưu link Bilibili +
+    tên phim gốc + tên phim tiếng Việt. Ghi ngay khi bấm TẢI BẰNG IDM nên
+    dù IDM hủy / lỗi thì file vẫn còn. Trả về đường dẫn file đã ghi."""
+    os.makedirs(folder, exist_ok=True)
+    duong_file = os.path.join(folder, ten_viet + ".txt")
+    noi_dung = (
+        "Tên phim (tiếng Việt): %s\n"
+        "Tên phim (gốc): %s\n"
+        "Link Bilibili: %s\n"
+        "Chất lượng: %s\n"
+    ) % (ten_viet, ten_goc, url.strip(), chat_luong or "")
+    with open(duong_file, "w", encoding="utf-8") as f:
+        f.write(noi_dung)
+    return duong_file
+
+
+def tao_thu_muc_duy_nhat(outdir, ten):
+    """(v6.6) Tạo thư mục <outdir>/<ten>, trùng tên phim.
+    Nếu thư mục đã có rồi thì không ghi đè: tạo thêm thư mục mới tên
+    "<ten> - YYYY-MM-DD HH-MM-SS" (ngày-giờ, không dùng ":" vì Windows
+    cấm). Tên đã qua sanitize_ten nên không còn ký tự cấm, tối đa 100
+    ký tự. Nếu vẫn trùng (cùng giây) thì thêm (1), (2)..."""
+    ten = sanitize_ten(ten)
+    folder = os.path.join(outdir, ten)
+    if not os.path.exists(folder):
+        os.makedirs(folder, exist_ok=True)
+        return folder
+    stamp = time.strftime("%Y-%m-%d %H-%M-%S")
+    # Chừa chỗ cho " - <stamp>" (22 ký tự) để tên không vượt 100 ký tự.
+    ten_goc = ten[:75].strip().strip(".")
+    ten_moi = sanitize_ten("%s - %s" % (ten_goc, stamp))
+    folder = os.path.join(outdir, ten_moi)
+    n = 1
+    while os.path.exists(folder):
+        ten_moi = sanitize_ten("%s - %s (%d)" % (ten_goc, stamp, n))
+        folder = os.path.join(outdir, ten_moi)
+        n += 1
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
 def dinh_dang_thoi_luong(sec):
     if sec is None:
         return "?"
@@ -672,9 +762,15 @@ def tai_va_gop(url, option, cookies, outdir, log, tien_trinh):
     if not ffmpeg:
         raise RuntimeError("Chưa tìm thấy ffmpeg (cần để gộp hình + tiếng).")
     info = kiem_tra_link(url, cookies)
-    ten = sanitize_ten(info["title"])
-    folder = os.path.join(outdir, ten)
-    os.makedirs(folder, exist_ok=True)
+    # (v6.5) Thư mục trùng tên phim đã dịch sang tiếng Việt.
+    # (v6.6) Trùng tên thì tạo thêm thư mục tên + ngày-giờ, tránh ghi đè.
+    ten = ten_phim_tieng_viet(info["title"])
+    folder = tao_thu_muc_duy_nhat(outdir, ten)
+    try:
+        luu_file_thong_tin_phim(folder, info["title"], ten, url,
+                                option.get("label") or "")
+    except Exception:
+        pass
     out_tmpl = os.path.join(folder, ten + ".%(ext)s")
     if option.get("audio_id"):
         fmt = "%s+%s" % (option["video_id"], option["audio_id"])
@@ -808,9 +904,18 @@ def tai_bang_idm(url, option, cookies, outdir, log):
     IDM tải xong thì dùng mục Gộp để gộp lại."""
     url = chuan_hoa_link_bilibili(url)
     info = kiem_tra_link(url, cookies)
-    ten = sanitize_ten(info["title"])
-    folder = os.path.join(outdir, ten)
-    os.makedirs(folder, exist_ok=True)
+    # (v6.5) Thư mục trùng tên phim đã dịch sang tiếng Việt.
+    # (v6.6) Trùng tên thì tạo thêm thư mục tên + ngày-giờ, tránh ghi đè.
+    ten = ten_phim_tieng_viet(info["title"])
+    folder = tao_thu_muc_duy_nhat(outdir, ten)
+    # (v6.5) Tạo file text lưu link + tên phim ngay khi bấm TẢI BẰNG IDM,
+    # trước khi đẩy sang IDM, nên dù IDM hủy / lỗi thì file vẫn còn.
+    try:
+        duong_txt = luu_file_thong_tin_phim(
+            folder, info["title"], ten, url, option.get("label") or "")
+        log("Đã lưu thông tin phim vào: " + duong_txt)
+    except Exception as e:
+        log("Không ghi được file thông tin phim: %s" % e)
     cookie_str = (doc_cookies_txt(cookies)
                   if cookies and os.path.isfile(cookies) else "")
     referer = url.strip()
@@ -912,17 +1017,21 @@ class CuaSoJob(tk.Toplevel):
         f1.grid_columnconfigure(1, weight=1)
 
         tk.Label(f1, text="Link phim:").grid(row=0, column=0, sticky="w", **pad)
-        tk.Entry(f1, textvariable=self.link_var).grid(
-            row=0, column=1, sticky="ew", **pad)
+        self.ent_link = tk.Entry(f1, textvariable=self.link_var)
+        self.ent_link.grid(row=0, column=1, sticky="ew", **pad)
+        # (v6.4) Nút Dán: dán link Bilibili từ clipboard vào ô Link phim.
+        self.btn_dan = tk.Button(f1, text="Dán",
+                                 command=self.bam_dan_link)
+        self.btn_dan.grid(row=0, column=2, **pad)
         self.btn_kiem_tra = tk.Button(f1, text="Kiểm tra link",
                                       command=self.bam_kiem_tra)
-        self.btn_kiem_tra.grid(row=0, column=2, **pad)
+        self.btn_kiem_tra.grid(row=0, column=3, **pad)
 
         self.info_var = tk.StringVar(value="Dán link Bilibili (BV...) rồi bấm Kiểm tra link.")
         if job.get("title"):
             self.info_var.set("Tiêu đề: %s" % job["title"])
         tk.Label(f1, textvariable=self.info_var, fg="gray", wraplength=640,
-                 justify="left").grid(row=1, column=0, columnspan=3,
+                 justify="left").grid(row=1, column=0, columnspan=4,
                                       sticky="w", **pad)
 
         tk.Label(f1, text="Chất lượng:").grid(row=2, column=0, sticky="w", **pad)
@@ -931,31 +1040,32 @@ class CuaSoJob(tk.Toplevel):
         self.cbo_chat_luong.grid(row=2, column=1, sticky="w", **pad)
         self.btn_tai = tk.Button(f1, text="TẢI XUỐNG + GỘP LUÔN (yt-dlp)",
                                  command=self.bam_tai, state="disabled")
-        self.btn_tai.grid(row=2, column=2, **pad)
+        self.btn_tai.grid(row=2, column=2, columnspan=2, **pad)
 
         self.btn_idm = tk.Button(f1, text="TẢI BẰNG IDM (nhanh, nhiều luồng)",
                                  command=self.bam_idm, state="disabled")
-        self.btn_idm.grid(row=3, column=0, columnspan=3, sticky="ew", **pad)
+        self.btn_idm.grid(row=3, column=0, columnspan=4, sticky="ew", **pad)
 
         tk.Label(f1, text="File cookies.txt (để tải 1080p):").grid(
             row=4, column=0, sticky="w", **pad)
         tk.Entry(f1, textvariable=self.cookies_var).grid(
             row=4, column=1, sticky="ew", **pad)
         tk.Button(f1, text="Chọn...",
-                  command=self.chon_cookies).grid(row=4, column=2, **pad)
+                  command=self.chon_cookies).grid(row=4, column=2,
+                                                  columnspan=2, **pad)
         tk.Label(f1, text="Không có cookies thì thường chỉ tải được 480p.",
-                 fg="gray").grid(row=5, column=0, columnspan=3, sticky="w", **pad)
+                 fg="gray").grid(row=5, column=0, columnspan=4, sticky="w", **pad)
         tk.Label(f1, text="% tải (IDM):").grid(row=6, column=0, sticky="w", **pad)
         self.tien_trinh_idm = ttk.Progressbar(f1, mode="determinate",
                                               maximum=100)
         self.tien_trinh_idm.grid(row=6, column=1, sticky="ew", **pad)
         self.phan_tram_var = tk.StringVar(value="")
         tk.Label(f1, textvariable=self.phan_tram_var, fg="gray").grid(
-            row=6, column=2, sticky="w", **pad)
+            row=6, column=2, columnspan=2, sticky="w", **pad)
         tk.Checkbutton(f1, text="Tải xong tự gộp luôn",
                        variable=self.tu_gop_var,
                        command=self.luu_job_hien_tai).grid(
-            row=7, column=0, columnspan=3, sticky="w", **pad)
+            row=7, column=0, columnspan=4, sticky="w", **pad)
 
         # ---- Khung 2: Gộp 2 file đã có ----
         f2 = tk.LabelFrame(self, text=" 2. Gộp 2 file đã có (tải bằng IDM) ",
@@ -1132,6 +1242,31 @@ class CuaSoJob(tk.Toplevel):
 
 
     # ---------- khung 1: tải video ----------
+    def bam_dan_link(self):
+        """(v6.4) Dán link Bilibili từ clipboard vào ô Link phim."""
+        try:
+            text = self.clipboard_get().strip()
+        except tk.TclError:
+            text = ""
+        if not text:
+            messagebox.showinfo(
+                "Clipboard trống",
+                "Chưa có gì trong clipboard để dán.\n"
+                "Copy link Bilibili trước đã.")
+            return
+        # Clipboard có thể có thêm chữ khác: tách lấy URL đầu tiên nếu có.
+        tim_url = re.search(r"https?://\S+", text)
+        url = tim_url.group(0).strip() if tim_url else text.splitlines()[0].strip()
+        self.link_var.set(url)
+        self.info_var.set("Đã dán link, bấm Kiểm tra link để đọc thông tin.")
+        self.ghi_log("Đã dán link từ clipboard.")
+        try:
+            self.ent_link.focus_set()
+            self.ent_link.icursor(tk.END)
+        except Exception:
+            pass
+        self.luu_job_hien_tai()
+
     def bam_kiem_tra(self):
         url = self.link_var.get().strip()
         if not url:

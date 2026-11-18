@@ -98,8 +98,36 @@ ly cookies. Giao dien 1 cua so duy nhat: cua so chinh la ttk.Notebook
 3 tab (Quan ly / Xu ly phu de / Doc phu de HoaiMy), cac tab phu de la
 Frame nhung trong Notebook, khong con Toplevel mo rieng chong nhau;
 nut "Kiem tra cap nhat" day ra canh ngoai cung GOC PHAI cua thanh nut,
-tach rieng khoi cac nut chuc nang khac. Cua so job van la 1 cua so
-phu (duy nhat duoc phep) cho 1 du an.
+tach rieng khoi cac nut chuc nang khac. Cua so job van la 1 cua so phu (duy nhat duoc phep) cho 1 du an.
+v7.5 (LUONG PHU DE VIETSUBK+ + 1 MACH - CYAN 19/11 05:44/05:45/05:46/
+05:47/05:48/05:49): UU TIEN SO 1 la tai duoc file SRT GOC tieng Trung
+ve thu muc du an (cau tu quang vao AI ben ngoai de dich); dich Gemini
+/ dich thu cong trong tool chi la TUY CHON, khong bat buoc, khong duoc
+chan luong tai file goc. Luong API Bilibili du phong nang cap theo
+Vietsubk+ v5.9.2: view API lay aid/cid/duration (pages[] cho cid tung
+phan) -> thu WBI da ky (tinh w_rid theo thuat toan mixin-key cong khai)
+-> WBI khong ky /x/player/wbi/v2 -> plain /x/player/v2, gui SESSDATA
+tu dung file cookies.txt + Referer, kiem tra data.bvid/cid/aid phai
+khop dung video (khong khop la bo), track AI chi tin khi nguon la
+wbi-player (track AI tu plain-player thi AI_SUBTITLE_SOURCE_NOT_READY),
+need_login_subtitle=true thi bao can dang nhap, chi lay subtitle_url
+https o hdslb.com/bilibili.com/bilivideo.com, parse JSON body
+from/to/content -> SRT, ten file <ten>_<BV>_P<page>_cid<cid>_<lan>.srt,
+kiem tra do phu maxEnd/duration <0.4 thi nghi ngo, danh dau, khong
+trinh bay nhu phu de tot. Khong co phu de thi bao thang "Khong co phu
+de" (cot Phu de de "Khong", log ro), KHONG tao file SRT rong, KHONG
+tao file SRT gia, KHONG ghi de file SRT da co bang file rong. Nut
+"LẤY PHỤ ĐỀ + DỊCH + ĐỌC (1 mạch)" o tab Quan ly: Buoc 1 LUON chay
+(tai SRT goc, khong can key Gemini), tai xong thi DUNG HAN, chi bao
+duong dan file + hien 2 nut "Dich trong tool" / "Mo tab HoaiMy" cho
+cau chon tiep (khong tu chuyen tab, khong tu chay dich); cong tac "Tu
+dich sau khi lay phu de" mac dinh TAT, chi bat moi tu dich tiep.
+File SRT goc LUON giu lai: dich loi giua chung thi KHONG ghi gi len
+file goc; luu de ban dich thi sao luu 1 ban .bak truoc, chi tao 1 lan
+(.bak da co thi giu nguyen). Tab Xu ly phu de co them che do "Dich
+thu cong": mo SRT goc, tu go tieng Viet tung cau (o nhap canh tung
+cau, co nut Luu nhap / tu luu nhap), luu thang ra SRT Viet, khong goi
+AI, van giu moc gio goc; luu xong mo tab Doc phu de HoaiMy.
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -119,6 +147,7 @@ C:\ffmpeg, C:\iContent...). Nếu không thấy sẽ báo link tải.
 Viết bởi Gà Con cho CYAN - 18/11/2026 (v6)
 """
 import asyncio
+import hashlib
 import json
 import os
 import queue
@@ -144,7 +173,7 @@ from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 # Cap nhat. Chi co 1 luong cap nhat duy nhat (cua ChipChip).
 APP_TITLE = "Chipchipdownload"
 STUDIO_TITLE = "ChipChipStudio"
-VERSION = "7.4"
+VERSION = "7.5"
 GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
 GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
                              + GITHUB_REPO + "/releases/latest")
@@ -857,6 +886,45 @@ def sao_luu_bak(duong_dan):
         return ""
 
 
+def luu_ban_dich_an_toan(duong_dan, cac_cau_dich, log=None):
+    """(v7.5) Luu ban dich DE LEN FILE GOC mot cach an toan, dung
+    chung cho dich Gemini, dich thu cong va luong 1 mach:
+    1) Sao luu 1 ban .bak truoc (sao_luu_bak: .bak da co thi GIU
+    NGUYEN, khong ghi de len ban sao luu cu — file goc that chi duoc
+    sao luu 1 lan duy nhat).
+    2) Chi ghi de SAU KHI da co du ban dich (cac_cau_dich khong rong).
+    Dich loi giua chung thi ham nay KHONG DUOC GOI, file goc con
+    nguyen, khong mat. Tra ve (duong_dan, bak)."""
+    if not cac_cau_dich:
+        raise ValueError("Chưa có bản dịch để lưu.")
+    bak = sao_luu_bak(duong_dan)
+    ghi_srt_chung(cac_cau_dich, duong_dan)
+    if log:
+        log("Đã lưu đè bản dịch lên file gốc: %s (bản sao lưu: %s)"
+            % (duong_dan, bak or "không có"))
+    return duong_dan, bak
+
+
+def ghep_ban_dich_thu_cong(cac_cau_goc, ban_dich):
+    """(v7.5) Ghep ban dich thu cong: giu NGUYEN moc gio goc,
+    lay chu tieng Viet tu ban_dich {chi_so: text} (khoa so hoac
+    chuoi); cau nao chua go thi giu nguyen chu goc de SRT van du
+    cau. Tra ve list cau da dich. Khong goi mang."""
+    ban_dich = ban_dich or {}
+    out = []
+    for c in cac_cau_goc or []:
+        chi_so = c.get("chi_so")
+        text = ban_dich.get(chi_so)
+        if text is None:
+            text = ban_dich.get(str(chi_so))
+        text = (text or "").strip()
+        out.append({"chi_so": chi_so,
+                    "bat_dau_ms": c.get("bat_dau_ms"),
+                    "ket_thuc_ms": c.get("ket_thuc_ms"),
+                    "text": text if text else (c.get("text") or "")})
+    return out
+
+
 def dinh_dang_ms_srt(ms):
     ms = int(ms)
     s, mmm = divmod(ms, 1000)
@@ -1114,15 +1182,131 @@ def lay_cookies_dict(cookies_path):
     return ket_qua
 
 
-def tai_phu_de_qua_api_bilibili(url, folder, ten_viet, cookies, log=None):
-    """(v7.4) DU PHONG khi yt-dlp khong tai duoc phu de: goi thang API
-    Bilibili nhu tien ich Chrome lam:
-    view API (lay aid/cid) -> x/player/v2 (lay subtitle_url, can
-    cookies SESSDATA neu co) -> tai JSON phu de (aisubtitle.hdslb.com)
-    -> doi sang SRT, luu <Ten phim TV>.srt vao cung thu muc phim.
-    Dung DUNG file cookies san co cua job (cookies_var / COOKIES_MAC_DINH
-    neu file ton tai) de doc SESSDATA, khong doi cach xu ly cookies.
-    Tra ve duong dan .srt hoac None."""
+WBI_MIXIN_TAB = [
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43,
+    5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16,
+    24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59,
+    6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+]
+
+
+def tinh_wbi_mixin_key(img_key, sub_key):
+    """(v7.5) Mixin key WBI theo thuat toan cong khai cua Bilibili
+    (bili-api / cac client mo): xao tron img_key + sub_key theo bang
+    co dinh 64 vi tri, lay 32 ky tu dau. Tra ve "" neu khong du."""
+    raw = (img_key or "") + (sub_key or "")
+    if len(raw) < 64:
+        return ""
+    return "".join(raw[i] for i in WBI_MIXIN_TAB)[:32]
+
+
+def lay_wbi_mixin_key(headers, log=None):
+    """(v7.5) Lay mixin key qua nav API (x/web-interface/nav ->
+    data.wbi_img.img_url/sub_url, lay ten file khong duoi .png).
+    Tra ve "" neu khong lay duoc (khi do bo qua URL WBI da ky)."""
+    try:
+        req = urllib.request.Request(
+            "https://api.bilibili.com/x/web-interface/nav", headers=headers)
+        with mo_url_co_fallback_ssl(req, timeout=20, log_cb=log) as resp:
+            nav = json.loads(resp.read().decode("utf-8", "replace"))
+        wbi = (nav.get("data") or {}).get("wbi_img") or {}
+        img = os.path.splitext(os.path.basename(wbi.get("img_url") or ""))[0]
+        sub = os.path.splitext(os.path.basename(wbi.get("sub_url") or ""))[0]
+        return tinh_wbi_mixin_key(img, sub)
+    except Exception:
+        return ""
+
+
+def ky_url_wbi(url_goc, mixin_key):
+    """(v7.5) Ky URL WBI: them wts (giay hien tai) + w_rid =
+    md5(urlencode(params da sap xep) + mixin_key)."""
+    parsed = urllib.parse.urlparse(url_goc)
+    params = dict(urllib.parse.parse_qsl(parsed.query))
+    params["wts"] = str(int(time.time()))
+    chuoi = urllib.parse.urlencode(sorted(params.items())) + mixin_key
+    params["w_rid"] = hashlib.md5(chuoi.encode("utf-8")).hexdigest()
+    moi = urllib.parse.urlencode(sorted(params.items()))
+    return urllib.parse.urlunparse(parsed._replace(query=moi))
+
+
+def _doc_json_url(url, headers, log=None):
+    """GET 1 URL JSON qua mo_url_co_fallback_ssl. Raise neu loi."""
+    req = urllib.request.Request(url, headers=headers)
+    with mo_url_co_fallback_ssl(req, timeout=30, log_cb=log) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
+
+
+def kiem_tra_khop_video(data, bvid, cid, aid):
+    """(v7.5) Kiem tra data.bvid/cid/aid cua player API co khop dung
+    video dang can khong (tranh lay nham sub video khac). Truong nao
+    co trong data thi phai khop; it nhat 1 trong aid/cid phai co va
+    khop, neu khong co truong nao thi coi nhu khong khop."""
+    if not isinstance(data, dict):
+        return False
+    co_truong = False
+    if data.get("bvid"):
+        co_truong = True
+        if str(data.get("bvid")) != str(bvid):
+            return False
+    if data.get("aid"):
+        co_truong = True
+        try:
+            if int(data.get("aid")) != int(aid):
+                return False
+        except Exception:
+            return False
+    if data.get("cid"):
+        co_truong = True
+        try:
+            if int(data.get("cid")) != int(cid):
+                return False
+        except Exception:
+            return False
+    return co_truong
+
+
+def ten_file_phu_de_api(folder, ten_viet, bvid, page, cid, lan):
+    """(v7.5) Ten file phu de theo Vietsubk+:
+    <ten>_<BV>_P<page>_cid<cid>_<lan>.srt"""
+    return os.path.join(
+        folder or "",
+        "%s_%s_P%d_cid%s_%s.srt" % (
+            sanitize_ten(ten_viet), bvid, page, cid,
+            sanitize_ten(lan or "zh")))
+
+
+def danh_gia_do_phu(cac_cau, duration):
+    """(v7.5) Do phu phu de = maxEnd / duration. Tra ve None neu
+    khong co cau nao hoac khong biet thoi luong video."""
+    if not cac_cau or not duration:
+        return None
+    try:
+        dur = float(duration)
+    except Exception:
+        return None
+    if dur <= 0:
+        return None
+    max_end = max((c.get("ket_thuc_ms") or 0) for c in cac_cau) / 1000.0
+    return max_end / dur
+
+
+def tai_phu_de_qua_api_bilibili(url, folder, ten_viet, cookies, log=None, page=1):
+    """(v7.5) DU PHONG khi yt-dlp khong tai duoc phu de — luong API
+    truc tiep theo Vietsubk+ v5.9.2 (da doc code that):
+    view API (lay aid/cid/duration, pages[] cho cid tung phan) ->
+    thu WBI da ky -> WBI khong ky /x/player/wbi/v2 -> plain
+    /x/player/v2, gui SESSDATA tu DUNG file cookies san co cua job
+    (cookies_var / COOKIES_MAC_DINH neu file ton tai) + Referer,
+    kiem tra data.bvid/cid/aid phai khop dung video (khong khop la
+    bo), track AI chi tin khi nguon la wbi-player (track AI tu
+    plain-player thi AI_SUBTITLE_SOURCE_NOT_READY), need_login_subtitle
+    =true thi bao can dang nhap, chi lay subtitle_url https o
+    hdslb.com/bilibili.com/bilivideo.com, tai JSON body
+    (from/to/content, giay) -> sap xep theo gio -> doi sang SRT,
+    ten file kieu Vietsubk+, kiem tra do phu maxEnd/duration <0.4
+    thi nghi ngo (van luu file nhung danh dau, khong trinh bay nhu
+    phu de tot). Khong co phu de thi tra None, KHONG tao file SRT
+    rong, KHONG tao file gia. Tra ve duong dan .srt hoac None."""
     def _log(s):
         if log:
             log(s)
@@ -1141,13 +1325,12 @@ def tai_phu_de_qua_api_bilibili(url, folder, ten_viet, cookies, log=None):
     if cookie_dict:
         headers["Cookie"] = "; ".join("%s=%s" % (k, v)
                                       for k, v in cookie_dict.items())
-    # 1) view API: lay aid + cid (trang dau tien).
+    os.makedirs(folder or ".", exist_ok=True)
+    # 1) view API: lay aid + cid (theo page) + duration.
     try:
-        req = urllib.request.Request(
+        info = _doc_json_url(
             "https://api.bilibili.com/x/web-interface/view?bvid=" + bvid,
-            headers=headers)
-        with mo_url_co_fallback_ssl(req, timeout=30, log_cb=_log) as resp:
-            info = json.loads(resp.read().decode("utf-8", "replace"))
+            headers, _log)
     except Exception as e:
         _log("API Bilibili: lỗi gọi view API (%s)." % e)
         return None
@@ -1155,62 +1338,111 @@ def tai_phu_de_qua_api_bilibili(url, folder, ten_viet, cookies, log=None):
         data = info.get("data") or {}
         aid = data.get("aid")
         pages = data.get("pages") or []
-        cid = pages[0].get("cid") if pages else data.get("cid")
+        duration = data.get("duration")
+        if pages:
+            idx = max(0, min(int(page or 1) - 1, len(pages) - 1))
+            cid = pages[idx].get("cid")
+            page_so = idx + 1
+        else:
+            cid = data.get("cid")
+            page_so = int(page or 1)
     except Exception:
-        aid = cid = None
+        aid = cid = duration = None
+        page_so = int(page or 1)
     if not aid or not cid:
         _log("API Bilibili: view API không trả aid/cid.")
         return None
-    # 2) x/player/v2: lay danh sach phu de (subtitle_url).
-    try:
-        req = urllib.request.Request(
-            "https://api.bilibili.com/x/player/v2?aid=%s&cid=%s" % (aid, cid),
-            headers=headers)
-        with mo_url_co_fallback_ssl(req, timeout=30, log_cb=_log) as resp:
-            player = json.loads(resp.read().decode("utf-8", "replace"))
-    except Exception as e:
-        _log("API Bilibili: lỗi gọi x/player/v2 (%s)." % e)
-        return None
-    try:
-        ds = (player.get("data") or {}).get("subtitle") or {}
-        danh_sach = ds.get("subtitles") or []
-    except Exception:
-        danh_sach = []
-    if not danh_sach:
-        _log("API Bilibili: x/player/v2 không trả danh sách phụ đề "
-             "(video này có thể cần đăng nhập - kiểm tra cookies.txt).")
-        return None
-    # Uu tien ai-zh, roi ngon ngu khac.
-    danh_sach = sorted(danh_sach,
-                       key=lambda s: 0 if (s.get("lan") or "") == "ai-zh" else 1)
-    dich = ten_file_phu_de(folder, ten_viet)
-    for muc in danh_sach:
-        sub_url = (muc or {}).get("subtitle_url") or ""
-        if not sub_url:
-            continue
-        if not sub_url.startswith("http"):
-            sub_url = "https:" + sub_url
+    # 2) Thu tu Vietsubk+: WBI da ky -> WBI khong ky -> plain v2.
+    mixin = lay_wbi_mixin_key(headers, _log)
+    co_so = "https://api.bilibili.com/x/player/wbi/v2"
+    tham_so = "aid=%s&bvid=%s&cid=%s" % (aid, bvid, cid)
+    ung_vien = []
+    if mixin:
+        ung_vien.append((ky_url_wbi(co_so + "?" + tham_so, mixin), "wbi-signed"))
+        _log("API Bilibili: đã tính được khóa WBI, thử URL WBI đã ký trước.")
+    else:
+        _log("API Bilibili: không lấy được khóa WBI, bỏ qua URL WBI đã ký.")
+    ung_vien.append((co_so + "?" + tham_so, "wbi"))
+    ung_vien.append(("https://api.bilibili.com/x/player/v2?" + tham_so,
+                     "plain"))
+    host_cho_phep = ("hdslb.com", "bilibili.com", "bilivideo.com")
+    for player_url, nguon in ung_vien:
         try:
-            req = urllib.request.Request(sub_url, headers=headers)
-            with mo_url_co_fallback_ssl(req, timeout=60, log_cb=_log) as resp:
-                du_lieu = json.loads(resp.read().decode("utf-8", "replace"))
+            player = _doc_json_url(player_url, headers, _log)
         except Exception as e:
-            _log("API Bilibili: lỗi tải subtitle_url (%s)." % e)
+            _log("API Bilibili (%s): lỗi gọi player (%s)." % (nguon, e))
             continue
-        cac_cau = chuyen_json_phu_de_bilibili_sang_cac_cau(du_lieu)
-        if not cac_cau:
+        if not isinstance(player, dict) or player.get("code") != 0:
+            _log("API Bilibili (%s): trả về lỗi (code=%s)."
+                 % (nguon, player.get("code") if isinstance(player, dict) else "?"))
             continue
-        try:
-            ghi_srt_chung(cac_cau, dich)
-        except Exception as e:
-            _log("API Bilibili: lỗi ghi SRT (%s)." % e)
-            return None
-        _log("Đã tải phụ đề qua API Bilibili (%s): %s"
-             % (muc.get("lan") or "", dich))
-        return dich
-    _log("API Bilibili: tải được danh sách nhưng không đổi được file nào sang SRT.")
+        data_p = player.get("data") or {}
+        if not kiem_tra_khop_video(data_p, bvid, cid, aid):
+            _log("API Bilibili (%s): BỎ — bvid/cid/aid không khớp video "
+                 "đang cần (tránh lấy nhầm phụ đề video khác)." % nguon)
+            continue
+        sub = data_p.get("subtitle") or {}
+        if sub.get("need_login_subtitle"):
+            _log("API Bilibili (%s): cần đăng nhập (need_login_subtitle) "
+                 "— kiểm tra file cookies.txt (SESSDATA)." % nguon)
+        danh_sach = sub.get("subtitles") or []
+        if not danh_sach:
+            _log("API Bilibili (%s): không có phụ đề." % nguon)
+            continue
+        # Uu tien ai-zh, roi ngon ngu khac.
+        danh_sach = sorted(
+            danh_sach,
+            key=lambda s: 0 if (s.get("lan") or "") == "ai-zh" else 1)
+        for muc in danh_sach:
+            lan = (muc or {}).get("lan") or "zh"
+            la_ai = bool((muc or {}).get("ai_type")) or lan == "ai-zh"
+            if la_ai and nguon == "plain":
+                _log("API Bilibili (plain): AI_SUBTITLE_SOURCE_NOT_READY — "
+                     "track AI (%s) từ plain-player, chưa tin được, "
+                     "thử nguồn khác." % lan)
+                continue
+            sub_url = (muc or {}).get("subtitle_url") or ""
+            if not sub_url:
+                continue
+            if not sub_url.startswith("http"):
+                sub_url = "https:" + sub_url
+            host = (urllib.parse.urlparse(sub_url).netloc or "").lower()
+            if not any(host == h or host.endswith("." + h)
+                       for h in host_cho_phep):
+                _log("API Bilibili: BỎ subtitle_url lạ (%s)." % sub_url)
+                continue
+            try:
+                du_lieu = _doc_json_url(sub_url, headers, _log)
+            except Exception as e:
+                _log("API Bilibili: lỗi tải subtitle_url (%s)." % e)
+                continue
+            cac_cau = chuyen_json_phu_de_bilibili_sang_cac_cau(du_lieu)
+            if not cac_cau:
+                continue
+            cac_cau.sort(key=lambda c: c.get("bat_dau_ms") or 0)
+            dich = ten_file_phu_de_api(folder, ten_viet, bvid, page_so,
+                                       cid, lan)
+            do_phu = danh_gia_do_phu(cac_cau, duration)
+            try:
+                ghi_srt_chung(cac_cau, dich)
+            except Exception as e:
+                _log("API Bilibili: lỗi ghi SRT (%s)." % e)
+                return None
+            if do_phu is not None and do_phu < 0.4:
+                _log("API Bilibili (%s): NGHI NGỜ — độ phủ phụ đề chỉ "
+                     "%.0f%% (<40%%), file vẫn lưu nhưng đánh dấu nghi "
+                     "ngờ, độ phủ thấp, không trình bày như phụ đề tốt: "
+                     "%s" % (lan, do_phu * 100, dich))
+            else:
+                _log("Đã tải phụ đề qua API Bilibili (%s, nguồn %s): %s"
+                     % (lan, nguon, dich))
+            return dich
+        _log("API Bilibili (%s): có danh sách nhưng không đổi được track "
+             "nào sang SRT." % nguon)
+    _log("API Bilibili: không lấy được phụ đề nào dùng được — video "
+         "này có thể không có phụ đề, hoặc cần đăng nhập (kiểm tra "
+         "cookies.txt).")
     return None
-
 
 def tai_phu_de(url, folder, ten_viet, cookies, log=None, langs_da_dung=None):
     """(v7.4) Tai phu de ve CUNG thu muc phim, ten <Ten phim TV>.srt.
@@ -1243,6 +1475,19 @@ def tai_phu_de(url, folder, ten_viet, cookies, log=None, langs_da_dung=None):
                "-o", mau + ".%(ext)s"]
         if cookies and os.path.isfile(cookies):
             cmd += ["--cookies", cookies]
+        # (v7.5) Anh chup thu muc TRUOC khi chay: chi nhan file MOI
+        # hoac DOI (mtime/size) sau lan chay nay — file SRT cu tu lan
+        # truoc khong duoc tinh la vua tai ve (khong tra file cu,
+        # khong ghi de file da co bang file rong).
+        tap_truoc = {}
+        try:
+            for ten0 in os.listdir(folder):
+                d0 = os.path.join(folder, ten0)
+                if os.path.isfile(d0):
+                    tap_truoc[ten0] = (os.path.getmtime(d0),
+                                       os.path.getsize(d0))
+        except Exception:
+            tap_truoc = {}
         cmd.append(url)
         try:
             r = subprocess.run(cmd, capture_output=True, text=True,
@@ -1253,15 +1498,29 @@ def tai_phu_de(url, folder, ten_viet, cookies, log=None, langs_da_dung=None):
             continue
         _log("Tải phụ đề (%s): mã %d" % (lang, r.returncode))
         # yt-dlp ghi <ten>.<lang>.srt (hoac .vtt/.json3 neu chua doi
-        # duoc) - doi/doi ten ve <ten>.srt
+        # duoc) - doi/doi ten ve <ten>.srt. Chi xet file moi/doi,
+        # file rong thi bo qua, khong dung.
         for ten in sorted(os.listdir(folder)):
             if not ten.startswith(ten_goc):
                 continue
             duong = os.path.join(folder, ten)
             if not os.path.isfile(duong):
                 continue
+            try:
+                tt = (os.path.getmtime(duong), os.path.getsize(duong))
+            except Exception:
+                continue
+            if ten in tap_truoc and tap_truoc[ten] == tt:
+                continue
+            if os.path.getsize(duong) <= 0:
+                _log("Tải phụ đề (%s): file %s rỗng — bỏ qua, không dùng."
+                     % (lang, ten))
+                continue
             ext = os.path.splitext(ten)[1].lower()
-            if ext == ".srt" and ten != os.path.basename(dich):
+            if ext == ".srt":
+                if ten == os.path.basename(dich):
+                    _log("Đã tải phụ đề qua yt-dlp (%s): %s" % (lang, dich))
+                    return dich
                 try:
                     if os.path.isfile(dich):
                         os.remove(dich)
@@ -1276,9 +1535,6 @@ def tai_phu_de(url, folder, ten_viet, cookies, log=None, langs_da_dung=None):
                     _log("Đã tải phụ đề qua yt-dlp (%s, đổi %s sang SRT): %s"
                          % (lang, ext, dich))
                     return ket_qua
-        if os.path.isfile(dich) and os.path.getsize(dich) > 0:
-            _log("Đã tải phụ đề qua yt-dlp (%s): %s" % (lang, dich))
-            return dich
     # yt-dlp that bai het -> API Bilibili truc tiep (du phong).
     _log("yt-dlp không tải được phụ đề, thử API Bilibili trực tiếp...")
     ket_qua = tai_phu_de_qua_api_bilibili(url, folder, ten_viet, cookies, _log)
@@ -1289,6 +1545,115 @@ def tai_phu_de(url, folder, ten_viet, cookies, log=None, langs_da_dung=None):
          "file cookies.txt (SESSDATA) rồi thử lại.")
     return None
 
+
+
+def dich_srt_1_mach(cac_cau, log=None, dich_fn=None):
+    """(v7.5) Dich 1 cum SRT bang dung logic cua tab Xu ly phu de
+    (dich_srt_theo_cum, cum 20 cau, giu timestamp, key luu local,
+    khong hardcode). dich_fn(cac_cau) -> list neu truyen (dung cho
+    test). Raise RuntimeError neu thieu key — KHONG goi API khi
+    khong co key. KHONG ghi gi len file goc o day (chi tra ve list
+    cau dich); viec luu do chay_luong_1_mach / nut Luu lam SAU KHI
+    dich xong, nen dich loi thi file goc con nguyen."""
+    if dich_fn is not None:
+        return dich_fn(cac_cau)
+    cfg = doc_config()
+    provider = cfg.get("phu_de_provider") or "Gemini"
+    khoa = {"Gemini": "gemini_api_key", "GPT": "openai_api_key",
+            "Muse": "anthropic_api_key"}.get(provider, "gemini_api_key")
+    key = (cfg.get(khoa) or "").strip()
+    if not key:
+        raise RuntimeError(
+            "Chưa có key %s — lưu key trong tab Xử lý phụ đề rồi "
+            "chạy lại (file SRT gốc vẫn còn nguyên)." % provider)
+    return dich_srt_theo_cum(
+        cac_cau, provider, key,
+        cfg.get("phu_de_the_loai") or "",
+        cfg.get("phu_de_nhan_vat") or "",
+        cfg.get("phu_de_xung_ho") or "",
+        cfg.get("phu_de_boi_canh") or "")
+
+
+def chay_luong_1_mach(url, folder, ten_viet, cookies, langs_da_dung,
+                      tu_dich=False, log=None, tai_fn=None, dich_fn=None):
+    """(v7.5) Luong 1 mach. UU TIEN SO 1: Buoc 1 LUON chay — lay SRT
+    GOC tieng Trung (yt-dlp thu dung ai-zh -> API Bilibili luong
+    Vietsubk+) ve thu muc du an, KHONG can key Gemini, KHONG goi
+    dich, KHONG doi dich. Tai xong thi DUNG (tra ve ket qua de UI
+    hoi cau chon tiep: Dich trong tool / Mo tab HoaiMy).
+    Buoc 2 (dich Gemini) CHI chay khi tu_dich=True (MAC DINH TAT, vi
+    CYAN dich bang AI ben ngoai): dich xong thi luu de file goc (co
+    .bak 1 lan, qua luu_ban_dich_an_toan). Dich loi giua chung ->
+    KHONG ghi gi len file goc, file goc con nguyen, tra ve loi buoc
+    'dich'. Khong co phu de -> tra ve loi buoc 'lay_phu_de', KHONG
+    tao file SRT nao.
+    Tra ve dict {thanh_cong, buoc_dung, loi, srt_goc, srt_viet,
+    da_dich, so_cau}."""
+    def _log(s):
+        if log:
+            log(s)
+    tai = tai_fn or tai_phu_de
+    _log("Bước 1: Lấy phụ đề gốc (yt-dlp → API Bilibili)...")
+    try:
+        srt = tai(url, folder, ten_viet, cookies, _log,
+                  langs_da_dung=langs_da_dung)
+    except Exception as e:
+        return {"thanh_cong": False, "buoc_dung": "lay_phu_de",
+                "loi": "Lỗi tải phụ đề: %s" % e,
+                "srt_goc": None, "srt_viet": None, "da_dich": False,
+                "so_cau": 0}
+    if not srt or not os.path.isfile(srt) or os.path.getsize(srt) <= 0:
+        return {"thanh_cong": False, "buoc_dung": "lay_phu_de",
+                "loi": "Không có phụ đề cho video này (quét + tải đều "
+                       "không thấy). Không tạo file SRT nào.",
+                "srt_goc": None, "srt_viet": None, "da_dich": False,
+                "so_cau": 0}
+    _log("Bước 1 xong: Đã tải SRT gốc: %s" % srt)
+    if not tu_dich:
+        _log("DỪNG tại đây: công tắc 'Tự dịch sau khi lấy phụ đề' đang "
+             "TẮT — không tự dịch, không tự chuyển tab. Cậu chọn tiếp: "
+             "Dịch trong tool / Mở tab HoaiMy.")
+        return {"thanh_cong": True, "buoc_dung": "lay_phu_de",
+                "loi": "", "srt_goc": srt, "srt_viet": None,
+                "da_dich": False, "so_cau": 0}
+    _log("Bước 2: Dịch sang tiếng Việt (Gemini, giữ nguyên mốc giờ)...")
+    try:
+        cac_goc = doc_srt(srt)
+        if not cac_goc:
+            raise RuntimeError("Đọc được file SRT gốc nhưng không có "
+                               "câu nào.")
+        cac_dich = dich_srt_1_mach(cac_goc, _log, dich_fn=dich_fn)
+    except Exception as e:
+        _log("Dịch lỗi, file gốc còn nguyên: %s" % e)
+        return {"thanh_cong": False, "buoc_dung": "dich",
+                "loi": "Dịch lỗi: %s — file SRT gốc còn nguyên, không "
+                       "mất." % e,
+                "srt_goc": srt, "srt_viet": None, "da_dich": False,
+                "so_cau": 0}
+    if not cac_dich:
+        _log("Dịch lỗi, file gốc còn nguyên: API không trả câu nào.")
+        return {"thanh_cong": False, "buoc_dung": "dich",
+                "loi": "Dịch lỗi: API không trả câu nào — file SRT gốc "
+                       "còn nguyên, không mất.",
+                "srt_goc": srt, "srt_viet": None, "da_dich": False,
+                "so_cau": 0}
+    if (len(cac_dich) != len(cac_goc)
+            or any(d.get("bat_dau_ms") != g.get("bat_dau_ms")
+                   or d.get("ket_thuc_ms") != g.get("ket_thuc_ms")
+                   for d, g in zip(cac_dich, cac_goc))):
+        _log("CẢNH BÁO: bản dịch lệch mốc giờ so với gốc — vẫn lưu "
+             "nhưng cậu kiểm tra lại trong tab Xử lý phụ đề.")
+    _log("Bước 3: Lưu đè bản dịch lên file gốc (sao lưu .bak 1 lần)...")
+    try:
+        duong, bak = luu_ban_dich_an_toan(srt, cac_dich, _log)
+    except Exception as e:
+        return {"thanh_cong": False, "buoc_dung": "luu",
+                "loi": "Lỗi lưu: %s — file SRT gốc còn nguyên." % e,
+                "srt_goc": srt, "srt_viet": None, "da_dich": False,
+                "so_cau": 0}
+    return {"thanh_cong": True, "buoc_dung": "xong", "loi": "",
+            "srt_goc": srt, "srt_viet": duong, "da_dich": True,
+            "so_cau": len(cac_dich)}
 
 
 def them_phu_de_tu_ngoai(job, parent=None):
@@ -4435,6 +4800,10 @@ class CuaSoJob(tk.Toplevel):
         self.dich_ten_var = tk.BooleanVar(value=job.get("dich_ten", True))
         self.tu_nhan_dien_var = tk.BooleanVar(
             value=job.get("tu_nhan_dien", True))
+        # (v7.5) Tu dich sau khi lay phu de (luong 1 mach): MAC DINH
+        # TAT, vi CYAN dich bang AI ben ngoai; chi bat moi tu dich.
+        self.tu_dich_sau_lay_phu_de_var = tk.BooleanVar(
+            value=job.get("tu_dich_sau_lay_phu_de", False))
 
         ten = job.get("title") or "Video mới"
         self.title("%s - %s" % (STUDIO_TITLE, ten[:60]))
@@ -4555,6 +4924,9 @@ class CuaSoJob(tk.Toplevel):
                        command=self.luu_job_hien_tai).pack(anchor="w")
         tk.Checkbutton(f_auto, text="Tự nhận diện 2 file sau khi tải",
                        variable=self.tu_nhan_dien_var,
+                       command=self.luu_job_hien_tai).pack(anchor="w")
+        tk.Checkbutton(f_auto, text="Tự dịch sau khi lấy phụ đề (luồng 1 mạch) — mặc định TẮT",
+                       variable=self.tu_dich_sau_lay_phu_de_var,
                        command=self.luu_job_hien_tai).pack(anchor="w")
         tk.Label(f_auto, text="Tắt ô nào là bỏ qua hẳn bước đó. CapCut đã xử lý tách giọng + chỉnh lớn nhỏ rồi — tool chỉ đè audio SRT lên thôi.",
                  fg="gray", wraplength=640, justify="left").pack(anchor="w")
@@ -4738,6 +5110,8 @@ class CuaSoJob(tk.Toplevel):
             self.job["tu_gop_ytdlp"] = bool(self.tu_gop_ytdlp_var.get())
             self.job["dich_ten"] = bool(self.dich_ten_var.get())
             self.job["tu_nhan_dien"] = bool(self.tu_nhan_dien_var.get())
+            self.job["tu_dich_sau_lay_phu_de"] = bool(
+                self.tu_dich_sau_lay_phu_de_var.get())
             if self.chat_luong_options:
                 self.job["chat_luong_options"] = self.chat_luong_options
             if self.link_info and self.link_info.get("duration") is not None:
@@ -5758,6 +6132,7 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
         tk.Button(hang, text="Xuất prompt + SRT", command=self.bam_xuat_prompt).pack(side="left", padx=4)
         tk.Button(hang, text="Nhập bản dịch về", command=self.bam_nhap_ban_dich).pack(side="left", padx=4)
         tk.Button(hang, text="Mở tab Đọc phụ đề", command=self.bam_mo_doc).pack(side="left", padx=4)
+        tk.Button(hang, text="Dịch thủ công", command=self.bam_dich_thu_cong).pack(side="left", padx=4)
         hang2 = tk.Frame(self)
         hang2.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
         tk.Button(hang2, text="LƯU ĐÈ LÊN FILE GỐC (.bak giữ lại)",
@@ -5773,6 +6148,41 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
             row=12, column=0, columnspan=3, sticky="ew", **pad)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(11, weight=1)
+        # (v7.5) Dich thu cong: khung an, hien khi bam "Dich thu cong".
+        # Mo SRT goc, tu go tieng Viet tung cau (o nhap canh tung cau),
+        # khong goi AI, van giu moc gio goc.
+        self.khung_thu_cong = tk.LabelFrame(
+            self, text=" Dịch thủ công (không gọi AI — tự gõ từng câu, giữ nguyên mốc giờ) ",
+            padx=8, pady=6)
+        self.khung_thu_cong.grid(row=13, column=0, columnspan=3,
+                                 sticky="nsew", **pad)
+        self.khung_thu_cong.grid_remove()
+        hang_tc = tk.Frame(self.khung_thu_cong)
+        hang_tc.pack(fill="x")
+        tk.Button(hang_tc, text="Lưu nháp",
+                  command=self._luu_nhap_thu_cong).pack(side="left", padx=4)
+        tk.Button(hang_tc, text="LƯU SRT VIỆT (ghi đè, có .bak)",
+                  font=("", 11, "bold"),
+                  command=self._luu_srt_viet_thu_cong).pack(side="left", padx=4)
+        tk.Button(hang_tc, text="Đóng",
+                  command=self._dong_dich_thu_cong).pack(side="left", padx=4)
+        self.nhap_tc_var = tk.StringVar(value="")
+        tk.Label(self.khung_thu_cong, textvariable=self.nhap_tc_var,
+                 fg="gray", wraplength=640, justify="left").pack(anchor="w")
+        canvas_tc = tk.Canvas(self.khung_thu_cong, height=220)
+        sb_tc = ttk.Scrollbar(self.khung_thu_cong, orient="vertical",
+                              command=canvas_tc.yview)
+        self.khung_dong_tc = tk.Frame(canvas_tc)
+        self.khung_dong_tc.bind(
+            "<Configure>",
+            lambda e: canvas_tc.configure(
+                scrollregion=canvas_tc.bbox("all")))
+        canvas_tc.create_window((0, 0), window=self.khung_dong_tc, anchor="nw")
+        canvas_tc.configure(yscrollcommand=sb_tc.set)
+        canvas_tc.pack(side="left", fill="both", expand=True)
+        sb_tc.pack(side="right", fill="y")
+        self.cac_entry_tc = {}
+        self.nhap_tc = {}
         self._nap_key()
         if srt_path and os.path.isfile(srt_path):
             self._nap_srt(srt_path)
@@ -5938,9 +6348,8 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
         if not cac:
             messagebox.showerror("Chưa có bản dịch", "Bấm Dịch phụ đề trước, hoặc nhập bản dịch về rồi mới lưu.")
             return
-        bak = sao_luu_bak(p)
         try:
-            ghi_srt_chung(cac, p)
+            duong, bak = luu_ban_dich_an_toan(p, cac)
             self.cac_cau_dich = cac
             if self.job:
                 self.job["subtitle_file"] = p
@@ -6004,6 +6413,139 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
             self.quan_ly.mo_tab_doc_phu_de(srt_path=p if p and os.path.isfile(p) else None, job=self.job)
         except Exception as e:
             messagebox.showerror("Không mở được tab", str(e))
+
+    # ---- (v7.5) Dich thu cong ----
+    def _duong_nhap_thu_cong(self, srt_path):
+        folder = os.path.dirname(os.path.abspath(srt_path))
+        goc = os.path.splitext(os.path.basename(srt_path))[0]
+        return os.path.join(folder, goc + "_dich-tay-nhap.json")
+
+    def _doc_nhap_thu_cong(self, srt_path):
+        try:
+            with open(self._duong_nhap_thu_cong(srt_path), "r",
+                      encoding="utf-8") as f:
+                du_lieu = json.load(f)
+            if isinstance(du_lieu, dict):
+                return du_lieu.get("ban_dich") or {}
+        except Exception:
+            pass
+        return {}
+
+    def _lay_ban_dich_thu_cong_hien_tai(self):
+        out = {}
+        for chi_so, ent in (self.cac_entry_tc or {}).items():
+            try:
+                out[chi_so] = ent.get().strip()
+            except Exception:
+                pass
+        return out
+
+    def _luu_nhap_thu_cong(self, am_tham=False):
+        p = self.srt_var.get().strip()
+        if not p or not self.cac_entry_tc:
+            return
+        try:
+            duong = self._duong_nhap_thu_cong(p)
+            with open(duong, "w", encoding="utf-8") as f:
+                json.dump({"srt": p,
+                           "ban_dich": self._lay_ban_dich_thu_cong_hien_tai()},
+                          f, ensure_ascii=False, indent=2)
+            if not am_tham:
+                self.nhap_tc_var.set("Đã lưu nháp: %s" % duong)
+        except Exception as e:
+            if not am_tham:
+                messagebox.showerror("Lỗi lưu nháp", str(e))
+
+    def bam_dich_thu_cong(self):
+        """(v7.5) Mo che do dich thu cong: hien danh sach cau kem
+        moc gio, o nhap tieng Viet canh tung cau. Khong goi AI."""
+        p = self.srt_var.get().strip()
+        if not p or not os.path.isfile(p):
+            messagebox.showerror("Thiếu file", "Chọn file SRT trước đã.")
+            return
+        if not self.cac_cau_goc:
+            self._nap_srt(p)
+        if not self.cac_cau_goc:
+            messagebox.showerror("Lỗi", "Không đọc được câu nào trong file SRT.")
+            return
+        self.nhap_tc = self._doc_nhap_thu_cong(p)
+        for w in list(self.khung_dong_tc.winfo_children()):
+            w.destroy()
+        self.cac_entry_tc = {}
+        for c in self.cac_cau_goc:
+            chi_so = c.get("chi_so")
+            dong = tk.Frame(self.khung_dong_tc)
+            dong.pack(fill="x", pady=1)
+            tk.Label(dong, text="%d" % (chi_so or 0), width=5,
+                     anchor="w").pack(side="left")
+            tk.Label(dong, text="%s --> %s" % (
+                dinh_dang_ms_srt(c.get("bat_dau_ms") or 0),
+                dinh_dang_ms_srt(c.get("ket_thuc_ms") or 0)),
+                width=24, anchor="w", fg="gray").pack(side="left")
+            tk.Label(dong, text=(c.get("text") or ""), anchor="w",
+                     wraplength=260, justify="left").pack(
+                         side="left", padx=4)
+            ent = tk.Entry(dong, width=40)
+            ent.pack(side="left", fill="x", expand=True, padx=4)
+            cu = (self.nhap_tc.get(chi_so)
+                  if isinstance(self.nhap_tc, dict) else None)
+            if cu is None and isinstance(self.nhap_tc, dict):
+                cu = self.nhap_tc.get(str(chi_so))
+            if cu:
+                ent.insert(0, cu)
+            ent.bind("<FocusOut>",
+                     lambda e: self._luu_nhap_thu_cong(am_tham=True))
+            self.cac_entry_tc[chi_so] = ent
+        self.nhap_tc_var.set(
+            "Đã nạp %d câu — gõ tiếng Việt vào ô bên phải từng câu. "
+            "Lưu nháp để lưu tạm (tự lưu nháp khi rời ô). Bấm LƯU SRT "
+            "VIỆT để lưu đè lên file gốc (có .bak 1 lần) rồi mở tab "
+            "Đọc phụ đề HoaiMy." % len(self.cac_cau_goc))
+        self.khung_thu_cong.grid()
+
+    def _dong_dich_thu_cong(self):
+        try:
+            self.khung_thu_cong.grid_remove()
+        except Exception:
+            pass
+
+    def _luu_srt_viet_thu_cong(self):
+        """(v7.5) Luu ban dich thu cong: ghep cau (giu moc gio
+        goc), luu de len file goc qua luu_ban_dich_an_toan (.bak 1
+        lan), roi mo tab Doc phu de HoaiMy voi file SRT Viet."""
+        p = self.srt_var.get().strip()
+        if not p or not os.path.isfile(p):
+            messagebox.showerror("Thiếu file", "Chọn file SRT trước đã.")
+            return
+        if not self.cac_cau_goc:
+            messagebox.showerror("Lỗi", "Chưa nạp câu nào để dịch.")
+            return
+        cac = ghep_ban_dich_thu_cong(
+            self.cac_cau_goc, self._lay_ban_dich_thu_cong_hien_tai())
+        try:
+            duong, bak = luu_ban_dich_an_toan(p, cac)
+        except Exception as e:
+            messagebox.showerror("Lỗi lưu", str(e))
+            return
+        self.cac_cau_dich = cac
+        if self.job:
+            self.job["subtitle_file"] = p
+            self.job["subtitle_vi_file"] = p
+            self.job["has_subtitle"] = True
+            self.job["subtitle_status"] = "da_dich"
+            cap_nhat_job_trong_jobs(self.job)
+        self.status_var.set("Đã lưu SRT Việt (dịch thủ công): %s "
+                            "(bản sao lưu: %s)" % (duong, bak or "không có"))
+        messagebox.showinfo("Đã lưu",
+                            "Đã lưu SRT Việt (dịch thủ công):\n%s\n"
+                            "Bản sao lưu file gốc: %s"
+                            % (duong, bak or "(không tạo được)"))
+        try:
+            self.quan_ly.mo_tab_doc_phu_de(srt_path=p, job=self.job)
+        except Exception as e:
+            messagebox.showinfo("Đã lưu",
+                                "File: %s\n(Không mở được tab Đọc phụ đề: "
+                                "%s)" % (p, e))
 
 
 class QuanLy(tk.Tk):
@@ -6097,6 +6639,57 @@ class QuanLy(tk.Tk):
                  "khi xong, hoặc đóng = hủy theo dõi (job vẫn lưu trong lịch sử).",
                  fg="gray", wraplength=600, justify="left").grid(
             row=4, column=0, columnspan=3, sticky="w", **pad)
+
+        # ---- (v7.5) Luong 1 mach: dan link -> lay SRT goc -> DUNG.
+        # UU TIEN SO 1 la tai duoc file SRT GOC tieng Trung ve thu muc
+        # du an (cau tu quang vao AI ben ngoai de dich); dich trong
+        # tool chi la tuy chon sau do. Tai xong thi DUNG HAN, chi bao
+        # duong dan file + hien 2 nut cho cau chon tiep (khong tu
+        # chuyen tab, khong tu chay dich).
+        f_1mach = tk.LabelFrame(
+            self.tab_quan_ly,
+            text=" Lấy phụ đề (1 mạch: dán link → tải SRT gốc) ",
+            padx=8, pady=6)
+        f_1mach.grid(row=5, column=0, columnspan=3, sticky="ew", **pad)
+        tk.Label(f_1mach, text="Link phim Bilibili:").grid(
+            row=0, column=0, sticky="w", **pad)
+        self.link_1mach_var = tk.StringVar(value="")
+        tk.Entry(f_1mach, textvariable=self.link_1mach_var).grid(
+            row=0, column=1, sticky="ew", **pad)
+        tk.Button(f_1mach, text="Dán",
+                  command=self._dan_link_1mach).grid(row=0, column=2, **pad)
+        self.btn_1mach = tk.Button(
+            f_1mach, text="LẤY PHỤ ĐỀ + DỊCH + ĐỌC (1 mạch)",
+            font=("", 11, "bold"), command=self.bam_luong_1_mach)
+        self.btn_1mach.grid(row=1, column=0, columnspan=3, sticky="ew", **pad)
+        self.tu_dich_1mach_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            f_1mach,
+            text="Tự dịch sau khi lấy phụ đề (mặc định TẮT — cậu dịch bằng AI bên ngoài)",
+            variable=self.tu_dich_1mach_var).grid(
+                row=2, column=0, columnspan=3, sticky="w", **pad)
+        self.status_1mach_var = tk.StringVar(
+            value="Dán link rồi bấm nút — tải SRT gốc xong thì dừng, cậu chọn tiếp.")
+        tk.Label(f_1mach, textvariable=self.status_1mach_var, fg="gray",
+                 wraplength=900, justify="left").grid(
+                     row=3, column=0, columnspan=3, sticky="w", **pad)
+        hang_sau_tai = tk.Frame(f_1mach)
+        hang_sau_tai.grid(row=4, column=0, columnspan=3, sticky="ew", **pad)
+        self.btn_sau_tai_dich = tk.Button(
+            hang_sau_tai, text="Dịch trong tool",
+            command=self._sau_tai_dich, state="disabled")
+        self.btn_sau_tai_dich.pack(side="left", padx=4)
+        self.btn_sau_tai_doc = tk.Button(
+            hang_sau_tai, text="Mở tab HoaiMy",
+            command=self._sau_tai_doc, state="disabled")
+        self.btn_sau_tai_doc.pack(side="left", padx=4)
+        self.log_1mach = scrolledtext.ScrolledText(f_1mach, height=6,
+                                                   state="disabled")
+        self.log_1mach.grid(row=5, column=0, columnspan=3, sticky="nsew",
+                            **pad)
+        f_1mach.grid_columnconfigure(1, weight=1)
+        self._srt_1mach = ""
+        self._job_1mach = None
 
         self.tab_quan_ly.grid_columnconfigure(1, weight=1)
         self.tab_quan_ly.grid_rowconfigure(1, weight=1)
@@ -6309,6 +6902,166 @@ class QuanLy(tk.Tk):
         self.notebook.select(self.tab_doc)
         return panel
 
+    # ---- (v7.5) Luong 1 mach ----
+    def _dan_link_1mach(self):
+        try:
+            text = self.clipboard_get().strip()
+        except tk.TclError:
+            text = ""
+        tim_url = re.search(r"https?://\S+", text) if text else None
+        self.link_1mach_var.set(
+            tim_url.group(0).strip() if tim_url
+            else (text.splitlines()[0].strip() if text else ""))
+
+    def _ghi_log_1_mach(self, s):
+        try:
+            self.after(0, lambda: self._ghi_log_1_mach_truc_tiep(s))
+        except Exception:
+            pass
+
+    def _ghi_log_1_mach_truc_tiep(self, s):
+        try:
+            self.log_1mach.config(state="normal")
+            self.log_1mach.insert("end", s + "\n")
+            self.log_1mach.see("end")
+            self.log_1mach.config(state="disabled")
+        except Exception:
+            pass
+
+    def bam_luong_1_mach(self):
+        """(v7.5) Bat dau luong 1 mach: tao job moi tu link, chay
+        nen. Buoc 1 (tai SRT goc) luon chay, khong can key Gemini;
+        dich chi chay khi cong tac tu dich dang BAT."""
+        url = self.link_1mach_var.get().strip()
+        if not url or "BV" not in url:
+            messagebox.showerror("Thiếu link",
+                                 "Dán link Bilibili (BV...) vào trước đã.")
+            return
+        outdir = self.outdir_var.get().strip()
+        if not outdir:
+            messagebox.showerror("Thiếu thư mục", "Chưa chọn thư mục lưu.")
+            return
+        job = {"id": str(uuid.uuid4())[:8], "title": "", "link": url,
+               "status": "moi", "pct_tai": 0, "pct_gop": 0,
+               "tu_gop": True, "xoa_goc": True,
+               "giam_15": True, "tu_gop_ytdlp": True,
+               "dich_ten": True, "tu_nhan_dien": True,
+               "tu_dich_sau_lay_phu_de": bool(self.tu_dich_1mach_var.get()),
+               "has_subtitle": None, "subtitle_langs": [],
+               "subtitle_file": "", "subtitle_vi_file": "", "folder": ""}
+        self._job_1mach = job
+        self.cap_nhat_job(job)
+        self.btn_1mach.config(state="disabled")
+        self.btn_sau_tai_dich.config(state="disabled")
+        self.btn_sau_tai_doc.config(state="disabled")
+        self.status_1mach_var.set("Đang chạy luồng 1 mạch...")
+        self._ghi_log_1_mach("Bắt đầu luồng 1 mạch: %s" % url)
+        threading.Thread(target=self._luong_1_mach_worker,
+                         args=(job, outdir), daemon=True).start()
+
+    def _luong_1_mach_worker(self, job, outdir):
+        log = self._ghi_log_1_mach
+        url = job.get("link") or ""
+        cookies = self.cookies_var.get().strip()
+        try:
+            log("Bước 0: Đọc thông tin video...")
+            info = kiem_tra_link(url, cookies)
+            ten_viet = ten_phim_tieng_viet(
+                info.get("title") or "video",
+                dich=job.get("dich_ten", True))
+            folder = tao_thu_muc_duy_nhat(outdir, ten_viet)
+            job["title"] = ten_viet
+            job["folder"] = folder
+            if info.get("duration") is not None:
+                job["duration"] = info.get("duration")
+            try:
+                self.after(0, lambda: self.cap_nhat_job(job))
+            except Exception:
+                pass
+            log("Bước 0 xong: %s -> %s" % (info.get("title"), folder))
+            try:
+                pd = kiem_tra_phu_de(url, cookies)
+                langs = pd.get("languages", []) or []
+            except Exception:
+                langs = []
+            log("Quét phụ đề: %s"
+                % (("có: " + ", ".join(langs)) if langs
+                   else "không thấy (vẫn thử tải)"))
+            ket = chay_luong_1_mach(
+                url, folder, ten_viet, cookies, langs,
+                job.get("tu_dich_sau_lay_phu_de", False), log)
+            job["subtitle_file"] = ket.get("srt_goc") or ""
+            job["has_subtitle"] = True if ket.get("srt_goc") else False
+            if ket.get("da_dich"):
+                job["subtitle_vi_file"] = ket.get("srt_viet") or ""
+                job["subtitle_status"] = "da_dich"
+            elif ket.get("srt_goc"):
+                job["subtitle_status"] = "da_tai_goc"
+            job["status"] = "da_kiem_tra"
+            self.after(0, self._luong_1_mach_xong, job, ket)
+        except Exception as e:
+            self.after(0, self._luong_1_mach_loi, job, str(e))
+
+    def _luong_1_mach_xong(self, job, ket):
+        self.btn_1mach.config(state="normal")
+        self.cap_nhat_job(job)
+        if ket.get("srt_goc"):
+            self._srt_1mach = ket["srt_goc"]
+            self._job_1mach = job
+            self.btn_sau_tai_dich.config(state="normal")
+            self.btn_sau_tai_doc.config(state="normal")
+            if ket.get("da_dich"):
+                self.status_1mach_var.set(
+                    "Đã tải + dịch xong: %s — chọn tiếp hoặc bấm Mở tab HoaiMy."
+                    % os.path.basename(ket["srt_goc"]))
+                messagebox.showinfo(
+                    "Luồng 1 mạch xong",
+                    "Đã tải SRT gốc + dịch xong, lưu đè file gốc (có .bak):\n%s\n\n"
+                    "Bấm 'Mở tab HoaiMy' để lấy giọng đọc, hoặc 'Dịch trong "
+                    "tool' để xem/sửa bản dịch." % ket["srt_goc"])
+            elif ket.get("buoc_dung") == "dich":
+                self.status_1mach_var.set(
+                    "Đã tải SRT gốc nhưng DỊCH LỖI — file gốc còn nguyên: %s"
+                    % os.path.basename(ket["srt_goc"]))
+                messagebox.showwarning(
+                    "Đã tải SRT gốc — dịch lỗi",
+                    "Đã tải SRT gốc:\n%s\n\nDỊCH LỖI: %s\nFile gốc còn "
+                    "nguyên, không mất. Bấm 'Dịch trong tool' để dịch lại "
+                    "hoặc dịch thủ công." % (ket["srt_goc"], ket.get("loi") or ""))
+            else:
+                self.status_1mach_var.set(
+                    "Đã tải SRT gốc: %s — dừng tại đây, cậu chọn tiếp."
+                    % os.path.basename(ket["srt_goc"]))
+                messagebox.showinfo(
+                    "Đã tải SRT gốc",
+                    "File SRT gốc:\n%s\n\nĐã DỪNG tại đây — không tự dịch, "
+                    "không tự chuyển tab. Bấm 'Dịch trong tool' để dịch "
+                    "trong tool, hoặc 'Mở tab HoaiMy' để lấy giọng đọc."
+                    % ket["srt_goc"])
+        else:
+            self.status_1mach_var.set(
+                "Không có phụ đề: %s" % (ket.get("loi") or ""))
+            messagebox.showinfo(
+                "Không có phụ đề",
+                "Không lấy được phụ đề cho video này.\n%s\n\nKhông tạo "
+                "file SRT nào." % (ket.get("loi") or ""))
+
+    def _luong_1_mach_loi(self, job, msg):
+        self.btn_1mach.config(state="normal")
+        self.status_1mach_var.set("Luồng 1 mạch lỗi: " + msg)
+        self._ghi_log_1_mach("Luồng 1 mạch LỖI: " + msg)
+        messagebox.showerror("Luồng 1 mạch lỗi", msg)
+
+    def _sau_tai_dich(self):
+        if getattr(self, "_srt_1mach", "") and os.path.isfile(self._srt_1mach):
+            self.mo_tab_xu_ly_phu_de(srt_path=self._srt_1mach,
+                                     job=self._job_1mach)
+
+    def _sau_tai_doc(self):
+        if getattr(self, "_srt_1mach", "") and os.path.isfile(self._srt_1mach):
+            self.mo_tab_doc_phu_de(srt_path=self._srt_1mach,
+                                   job=self._job_1mach)
+
     def chon_thu_muc_luu(self):
         folder = filedialog.askdirectory(title="Chọn thư mục lưu mặc định")
         if folder:
@@ -6331,6 +7084,7 @@ class QuanLy(tk.Tk):
                "tu_gop": True, "xoa_goc": True,
                "giam_15": True, "tu_gop_ytdlp": True,
                "dich_ten": True, "tu_nhan_dien": True,
+               "tu_dich_sau_lay_phu_de": False,
                "has_subtitle": None, "subtitle_langs": [],
                "subtitle_file": "", "subtitle_vi_file": "", "folder": ""}
         self.mo_cua_so_job(job)

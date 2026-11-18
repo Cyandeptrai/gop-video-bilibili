@@ -1,20 +1,26 @@
 # -*- coding: utf-8 -*-
 r"""
 GỘP VIDEO BILIBILI - bản giao diện (build thành file .exe trên Windows)
-Luồng chính (dán link -> tải bằng IDM -> gộp -> xem):
+v6: nhiều cửa sổ (mỗi cửa sổ 1 video), lịch sử job lưu lại để mở lại,
+tự gộp sau khi IDM tải xong, theo dõi % tải (quét thư mục) + % gộp từng
+cửa sổ, gộp xong tự xóa 2 file gốc.
+
+Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
    tự gộp thành 1 video hoàn chỉnh.
 2. Tải video từ Bilibili bằng IDM: dán link, chọn chất lượng, tool đẩy link
    hình + link tiếng sang IDM qua COM API (kèm Referer + cookie) để IDM tải
-   nhanh nhiều luồng; tool hiện % tải (đo dung lượng file đang lớn dần),
-   tải xong tự điền 2 file vào mục Gộp.
+   nhanh nhiều luồng; tool hiện % tải (quét dung lượng mọi file media trong
+   thư mục, không phụ thuộc tên file), tải xong tự nhận diện cặp file rồi
+   TỰ GỘP luôn (không cần bấm tay).
 3. Gộp 2 file đã có (tải bằng IDM): chọn file hình + file tiếng, gộp lại;
    gộp xong bấm XEM THÀNH QUẢ để mở video.
 Video hoàn thiện lưu vào <thư mục lưu>\<tên video>\<tên video>.mp4
 (thư mục lưu mặc định: Desktop\Video-Da-Gop, nhớ lựa chọn lần sau).
+Gộp xong (thành công) tool tự xóa 2 file gốc hình + tiếng cho nhẹ ổ.
 Cần ffmpeg + yt-dlp: tool tự tìm trên máy (cùng thư mục với .exe, PATH,
 C:\ffmpeg, C:\iContent...). Nếu không thấy sẽ báo link tải.
-Viết bởi Gà Con cho CYAN - 17/11/2026
+Viết bởi Gà Con cho CYAN - 18/11/2026 (v6)
 """
 import json
 import os
@@ -25,12 +31,16 @@ import sys
 import threading
 import time
 import tkinter as tk
+import uuid
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 APP_TITLE = "Gộp Video Bilibili"
 FFMPEG_LINK = "https://www.gyan.dev/ffmpeg/builds/"
 YTDLP_LINK = "https://github.com/yt-dlp/yt-dlp/releases"
-MEDIA_EXTS = (".mp4", ".m4a", ".webm", ".mkv")
+# .m4s: file tiếng IDM tải về thực tế có đuôi .m4s (không phải .m4a như đặt
+# tên lúc đẩy sang IDM) - v5 chỉ nhận .m4a nên tracker không đếm được file
+# tiếng, chỉ hiện 77%. v6 nhận cả .m4s.
+MEDIA_EXTS = (".mp4", ".m4a", ".m4s", ".webm", ".mkv")
 COOKIES_MAC_DINH = r"C:\Users\Administrator\Desktop\Cookiebili\cookies.txt"
 UA_TRINH_DUYET = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                   "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -57,6 +67,8 @@ def chuan_hoa_link_bilibili(url):
     if m:
         return "https://www.bilibili.com/video/" + m.group(1)
     return url
+
+
 # Mã chất lượng (qn) của Bilibili -> nhãn hiển thị. Dùng mã qn thay vì chiều
 # cao pixel vì video dọc (vd. 1080x1920) có height=1920 nhưng vẫn là "1080p".
 QN_LABEL = {6: "240p", 16: "360p", 32: "480p", 64: "720p", 74: "720p60",
@@ -72,6 +84,12 @@ def app_dir():
 
 def config_path():
     return os.path.join(app_dir(), "config.json")
+
+
+def jobs_path():
+    """File lịch sử job (v6): lưu trạng thái từng cửa sổ/job để lần sau mở
+    lại vẫn còn, tiếp tục tải/gộp được."""
+    return os.path.join(app_dir(), "jobs.json")
 
 
 def mac_dinh_thu_muc_luu():
@@ -92,6 +110,24 @@ def luu_config(cfg):
     try:
         with open(config_path(), "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def doc_jobs():
+    """Đọc danh sách job đã lưu. Trả về list (có thể rỗng)."""
+    try:
+        with open(jobs_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def luu_jobs(jobs):
+    try:
+        with open(jobs_path(), "w", encoding="utf-8") as f:
+            json.dump(jobs, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 
@@ -177,6 +213,43 @@ def file_co_video(ffprobe, path):
         return None
 
 
+def lay_thoi_luong(ffprobe, path):
+    """Thời lượng file (giây, float) qua ffprobe, None nếu không đọc được."""
+    try:
+        r = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=30,
+            **chay_ngam_kwargs())
+        return float(r.stdout.strip())
+    except Exception:
+        return None
+
+
+def quet_dung_luong_thu_muc(folder):
+    """(v6) Tổng dung lượng mọi file media trong thư mục (kể cả .m4s),
+    không phụ thuộc tên file. Dùng để theo dõi % tải IDM: IDM lưu file
+    tiếng với tên/đuôi thực tế khác tên tool đặt, quét thư mục vẫn đếm đủ.
+    Không đếm file thành phẩm đã gộp (tên chứa '_gop')."""
+    tong = 0
+    try:
+        for name in os.listdir(folder):
+            low = name.lower()
+            if not low.endswith(MEDIA_EXTS):
+                continue
+            if "_gop" in low:
+                continue
+            p = os.path.join(folder, name)
+            try:
+                if os.path.isfile(p):
+                    tong += os.path.getsize(p)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return tong
+
+
 def nhan_dien_cap(folder, ffmpeg):
     """Nhận diện cặp (video, audio) trong thư mục. Cần đúng 2 file media.
     Ưu tiên dùng ffprobe xem file nào thật sự có hình, không đọc được thì
@@ -235,6 +308,18 @@ def dinh_dang_thoi_luong(sec):
     h, r = divmod(sec, 3600)
     m, s = divmod(r, 60)
     return "%d:%02d:%02d" % (h, m, s) if h else "%02d:%02d" % (m, s)
+
+
+def dinh_dang_trang_thai(status):
+    return {
+        "moi": "Mới",
+        "da_kiem_tra": "Đã kiểm tra link",
+        "dang_tai_idm": "Đang tải (IDM)",
+        "cho_gop": "Chờ gộp",
+        "dang_gop": "Đang gộp",
+        "xong": "Đã xong",
+        "loi": "Lỗi",
+    }.get(status, status)
 
 
 def kiem_tra_link(url, cookies):
@@ -456,27 +541,78 @@ def tai_bang_idm(url, option, cookies, outdir, log):
     return folder, ten_video, ten_audio if link_audio else None, option.get("tong_dung_luong") or 0
 
 
-class App(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title(APP_TITLE)
-        self.geometry("700x800")
-        self.resizable(True, True)
+def gop_co_tien_trinh(video, audio, out_path, ffmpeg, tien_trinh_cb):
+    """(v6) Gộp hình + tiếng bằng ffmpeg, báo % gộp qua tien_trinh_cb(pct).
+    Tính % từ thời gian đã xử lý (out_time_ms) so với thời lượng video.
+    Trả về out_path nếu thành công, raise RuntimeError nếu lỗi."""
+    ffprobe = tim_ffprobe(ffmpeg)
+    tong_giay = None
+    if ffprobe:
+        tong_giay = lay_thoi_luong(ffprobe, video)
+        if tong_giay is None:
+            tong_giay = lay_thoi_luong(ffprobe, audio)
+    cmd = [ffmpeg, "-y", "-i", video, "-i", audio, "-c", "copy",
+           "-progress", "pipe:1", "-nostats", out_path]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True,
+                            errors="replace", bufsize=1,
+                            **chay_ngam_kwargs())
+    out_ms_re = re.compile(r"out_time_ms=(\d+)")
+    for line in proc.stdout:
+        m = out_ms_re.search(line)
+        if m and tong_giay:
+            try:
+                pct = int(int(m.group(1)) / (tong_giay * 1000.0) * 100)
+                tien_trinh_cb(max(0, min(100, pct)))
+            except Exception:
+                pass
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError("ffmpeg báo lỗi (mã %d)." % proc.returncode)
+    if not os.path.isfile(out_path):
+        raise RuntimeError("Gộp xong nhưng không thấy file thành phẩm.")
+    tien_trinh_cb(100)
+    return out_path
+
+
+class CuaSoJob(tk.Toplevel):
+    """(v6) Một cửa sổ xử lý 1 video: tải (yt-dlp/IDM) + gộp + xem.
+    Trạng thái job được lưu vào jobs.json để lần sau mở lại tiếp tục được.
+    Đóng cửa sổ = dừng theo dõi, job vẫn lưu lại trong lịch sử."""
+
+    def __init__(self, quan_ly, job):
+        super().__init__(quan_ly)
+        self.quan_ly = quan_ly
+        self.job = job
+        self.job_id = job.get("id") or str(uuid.uuid4())[:8]
+        self.job["id"] = self.job_id
         self.ffmpeg = None
         self.link_info = None
         self.chat_luong_options = []
+        self.thanh_qua = job.get("output_file") or None
+        self.da_dong = False
+        self.dang_theo_doi_idm = False
+        self.dang_gop = False
 
         cfg = doc_config()
-        self.video_var = tk.StringVar()
-        self.audio_var = tk.StringVar()
+        self.video_var = tk.StringVar(value=job.get("video_file") or "")
+        self.audio_var = tk.StringVar(value=job.get("audio_file") or "")
         self.outdir_var = tk.StringVar(
-            value=cfg.get("output_dir") or mac_dinh_thu_muc_luu())
-        self.link_var = tk.StringVar()
-        self.chat_luong_var = tk.StringVar()
+            value=job.get("outdir") or cfg.get("output_dir")
+            or mac_dinh_thu_muc_luu())
+        self.link_var = tk.StringVar(value=job.get("link") or "")
+        self.chat_luong_var = tk.StringVar(value=job.get("quality_label") or "")
         self.cookies_var = tk.StringVar(
             value=cfg.get("cookies") or (
                 COOKIES_MAC_DINH if os.path.isfile(COOKIES_MAC_DINH) else ""))
         self.status_var = tk.StringVar(value="Sẵn sàng.")
+        self.tu_gop_var = tk.BooleanVar(value=job.get("tu_gop", True))
+        self.xoa_goc_var = tk.BooleanVar(value=job.get("xoa_goc", True))
+
+        ten = job.get("title") or "Video mới"
+        self.title("%s - %s" % (APP_TITLE, ten[:60]))
+        self.geometry("700x860")
+        self.resizable(True, True)
 
         pad = {"padx": 8, "pady": 4}
 
@@ -493,6 +629,8 @@ class App(tk.Tk):
         self.btn_kiem_tra.grid(row=0, column=2, **pad)
 
         self.info_var = tk.StringVar(value="Dán link Bilibili (BV...) rồi bấm Kiểm tra link.")
+        if job.get("title"):
+            self.info_var.set("Tiêu đề: %s" % job["title"])
         tk.Label(f1, textvariable=self.info_var, fg="gray", wraplength=640,
                  justify="left").grid(row=1, column=0, columnspan=3,
                                       sticky="w", **pad)
@@ -517,13 +655,17 @@ class App(tk.Tk):
                   command=self.chon_cookies).grid(row=4, column=2, **pad)
         tk.Label(f1, text="Không có cookies thì thường chỉ tải được 480p.",
                  fg="gray").grid(row=5, column=0, columnspan=3, sticky="w", **pad)
+        tk.Label(f1, text="% tải (IDM):").grid(row=6, column=0, sticky="w", **pad)
         self.tien_trinh_idm = ttk.Progressbar(f1, mode="determinate",
                                               maximum=100)
-        self.tien_trinh_idm.grid(row=6, column=0, columnspan=2,
-                                 sticky="ew", **pad)
+        self.tien_trinh_idm.grid(row=6, column=1, sticky="ew", **pad)
         self.phan_tram_var = tk.StringVar(value="")
         tk.Label(f1, textvariable=self.phan_tram_var, fg="gray").grid(
             row=6, column=2, sticky="w", **pad)
+        tk.Checkbutton(f1, text="Tải xong tự gộp luôn",
+                       variable=self.tu_gop_var,
+                       command=self.luu_job_hien_tai).grid(
+            row=7, column=0, columnspan=3, sticky="w", **pad)
 
         # ---- Khung 2: Gộp 2 file đã có ----
         f2 = tk.LabelFrame(self, text=" 2. Gộp 2 file đã có (tải bằng IDM) ",
@@ -551,11 +693,23 @@ class App(tk.Tk):
                                  height=2, command=self.bam_gop)
         self.btn_gop.grid(row=3, column=0, columnspan=3, sticky="ew", **pad)
 
-        self.thanh_qua = None
+        tk.Label(f2, text="% gộp:").grid(row=4, column=0, sticky="w", **pad)
+        self.tien_trinh_gop = ttk.Progressbar(f2, mode="determinate",
+                                              maximum=100)
+        self.tien_trinh_gop.grid(row=4, column=1, sticky="ew", **pad)
+        self.phan_tram_gop_var = tk.StringVar(value="")
+        tk.Label(f2, textvariable=self.phan_tram_gop_var, fg="gray").grid(
+            row=4, column=2, sticky="w", **pad)
+        tk.Checkbutton(f2, text="Gộp xong tự xóa 2 file gốc (hình + tiếng)",
+                       variable=self.xoa_goc_var,
+                       command=self.luu_job_hien_tai).grid(
+            row=5, column=0, columnspan=3, sticky="w", **pad)
+
         self.btn_xem = tk.Button(f2, text="XEM THÀNH QUẢ",
                                  font=("", 11, "bold"),
-                                 command=self.bam_xem, state="disabled")
-        self.btn_xem.grid(row=4, column=0, columnspan=3, sticky="ew", **pad)
+                                 command=self.bam_xem,
+                                 state="normal" if self.thanh_qua else "disabled")
+        self.btn_xem.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
 
         # ---- Thư mục lưu ----
         tk.Label(self, text="Thư mục lưu:").grid(row=2, column=0, sticky="w", **pad)
@@ -575,8 +729,9 @@ class App(tk.Tk):
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(4, weight=1)
+        self.protocol("WM_DELETE_WINDOW", self.dong_cua_so)
 
-        self.ghi_log("Tool sẵn sàng.")
+        self.ghi_log("Cửa sổ job: %s" % ten)
         self.ffmpeg = tim_ffmpeg()
         if self.ffmpeg:
             self.ghi_log("Đã tìm thấy ffmpeg.")
@@ -586,23 +741,105 @@ class App(tk.Tk):
             self.ghi_log("Đã tìm thấy yt-dlp.")
         else:
             self.ghi_log("CHƯA tìm thấy yt-dlp! Phần tải video cần yt-dlp.")
+        # Khôi phục lựa chọn chất lượng đã lưu (nếu có).
+        if job.get("chat_luong_options"):
+            self.chat_luong_options = job["chat_luong_options"]
+            self.cbo_chat_luong["values"] = [o["label"] for o in self.chat_luong_options]
+            self.btn_tai.config(state="normal")
+            self.btn_idm.config(state="normal")
+            # Khôi phục link_info để bấm tải được ngay.
+            self.link_info = {"title": job.get("title") or "video",
+                              "duration": job.get("duration"),
+                              "options": self.chat_luong_options}
+        if job.get("status") == "xong" and self.thanh_qua:
+            self.status_var.set("Đã xong: " + self.thanh_qua)
 
     # ---------- tiện ích ----------
+    def con_song(self):
+        try:
+            return (not self.da_dong) and bool(self.winfo_exists())
+        except Exception:
+            return False
+
+    def after_an_toan(self, ms, func, *args):
+        if not self.con_song():
+            return
+        try:
+            self.after(ms, func, *args)
+        except Exception:
+            pass
+
     def ghi_log(self, text):
-        self.log.config(state="normal")
-        self.log.insert("end", text + "\n")
-        self.log.see("end")
-        self.log.config(state="disabled")
+        if not self.con_song():
+            return
+        try:
+            self.log.config(state="normal")
+            self.log.insert("end", text + "\n")
+            self.log.see("end")
+            self.log.config(state="disabled")
+        except Exception:
+            pass
 
     def log_threadsafe(self, text):
-        self.after(0, self.ghi_log, text)
+        self.after_an_toan(0, self.ghi_log, text)
 
     def status_threadsafe(self, text):
-        self.after(0, self.status_var.set, text)
+        if not self.con_song():
+            return
+        try:
+            self.after(0, self.status_var.set, text)
+        except Exception:
+            pass
 
     def luu_cau_hinh(self):
         luu_config({"output_dir": self.outdir_var.get().strip(),
                     "cookies": self.cookies_var.get().strip()})
+
+    def luu_job_hien_tai(self, status=None, pct_tai=None, pct_gop=None):
+        try:
+            if status:
+                self.job["status"] = status
+            if pct_tai is not None:
+                self.job["pct_tai"] = pct_tai
+            if pct_gop is not None:
+                self.job["pct_gop"] = pct_gop
+            self.job["link"] = self.link_var.get().strip()
+            self.job["title"] = self.link_info.get("title") if self.link_info else self.job.get("title")
+            self.job["quality_label"] = self.chat_luong_var.get().strip()
+            self.job["outdir"] = self.outdir_var.get().strip()
+            self.job["video_file"] = self.video_var.get().strip()
+            self.job["audio_file"] = self.audio_var.get().strip()
+            self.job["output_file"] = self.thanh_qua or ""
+            self.job["tu_gop"] = bool(self.tu_gop_var.get())
+            self.job["xoa_goc"] = bool(self.xoa_goc_var.get())
+            if self.chat_luong_options:
+                self.job["chat_luong_options"] = self.chat_luong_options
+            if self.link_info and self.link_info.get("duration") is not None:
+                self.job["duration"] = self.link_info.get("duration")
+            self.quan_ly.cap_nhat_job(self.job)
+        except Exception:
+            pass
+
+    def dong_cua_so(self):
+        if self.dang_theo_doi_idm or self.dang_gop:
+            if not messagebox.askyesno(
+                    "Job đang chạy",
+                    "Job này đang tải/gộp. Đóng cửa sổ sẽ dừng theo dõi "
+                    "(IDM vẫn tải xong file của nó, lần sau mở lại job để "
+                    "tiếp tục).\n\nĐóng cửa sổ này?"):
+                return
+        self.da_dong = True
+        self.dang_theo_doi_idm = False
+        self.luu_job_hien_tai()
+        try:
+            self.quan_ly.dong_cua_so_job(self.job_id)
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
 
     # ---------- khung 1: tải video ----------
     def bam_kiem_tra(self):
@@ -625,11 +862,12 @@ class App(tk.Tk):
     def _kiem_tra_worker(self, url):
         try:
             info = kiem_tra_link(url, self.cookies_var.get().strip())
-            self.after(0, self._kiem_tra_xong, info)
+            self.after_an_toan(0, self._kiem_tra_xong, info)
         except Exception as e:
-            self.after(0, self._kiem_tra_loi, str(e))
+            self.after_an_toan(0, self._kiem_tra_loi, str(e))
         finally:
-            self.after(0, lambda: self.btn_kiem_tra.config(state="normal"))
+            self.after_an_toan(
+                0, lambda: self.btn_kiem_tra.config(state="normal"))
 
     def _kiem_tra_xong(self, info):
         self.link_info = info
@@ -644,6 +882,7 @@ class App(tk.Tk):
         self.btn_tai.config(state="normal")
         self.btn_idm.config(state="normal")
         self.ghi_log("Đã đọc link: %s" % info["title"])
+        self.luu_job_hien_tai(status="da_kiem_tra")
 
     def _kiem_tra_loi(self, msg):
         self.info_var.set("Lỗi: " + msg)
@@ -657,17 +896,19 @@ class App(tk.Tk):
             self.cookies_var.set(p)
             self.luu_cau_hinh()
 
+    def _lay_option_da_chon(self):
+        chon = self.chat_luong_var.get().strip()
+        for o in getattr(self, "chat_luong_options", []):
+            if o["label"] == chon:
+                return o
+        return None
+
     def bam_tai(self):
         if not self.link_info:
             messagebox.showerror("Chưa kiểm tra", "Bấm Kiểm tra link trước đã.")
             return
         url = self.link_var.get().strip()
-        chon = self.chat_luong_var.get().strip()
-        option = None
-        for o in getattr(self, "chat_luong_options", []):
-            if o["label"] == chon:
-                option = o
-                break
+        option = self._lay_option_da_chon()
         if option is None:
             messagebox.showerror("Chưa chọn", "Chọn chất lượng tải về trước đã.")
             return
@@ -688,15 +929,19 @@ class App(tk.Tk):
             out_path, folder = tai_va_gop(url, option, cookies, outdir,
                                           self.log_threadsafe,
                                           self.status_threadsafe)
-            self.after(0, self._tai_xong, out_path, folder)
+            self.after_an_toan(0, self._tai_xong, out_path, folder)
         except Exception as e:
-            self.after(0, self._tai_loi, str(e))
+            self.after_an_toan(0, self._tai_loi, str(e))
         finally:
-            self.after(0, lambda: self.btn_tai.config(state="normal"))
+            self.after_an_toan(
+                0, lambda: self.btn_tai.config(state="normal"))
 
     def _tai_xong(self, out_path, folder):
         self.status_var.set("Tải xong.")
+        self.thanh_qua = out_path
+        self.btn_xem.config(state="normal")
         self.ghi_log("TẢI XONG: " + out_path)
+        self.luu_job_hien_tai(status="xong", pct_tai=100, pct_gop=100)
         if messagebox.askyesno("Xong rồi!",
                                "Video đã tải + gộp xong:\n" + out_path +
                                "\n\nMở thư mục chứa video?"):
@@ -705,6 +950,7 @@ class App(tk.Tk):
     def _tai_loi(self, msg):
         self.status_var.set("Tải thất bại.")
         self.ghi_log("TẢI THẤT BẠI: " + msg)
+        self.luu_job_hien_tai(status="loi")
         messagebox.showerror("Tải thất bại", msg)
 
     def bam_idm(self):
@@ -712,12 +958,7 @@ class App(tk.Tk):
             messagebox.showerror("Chưa kiểm tra", "Bấm Kiểm tra link trước đã.")
             return
         url = self.link_var.get().strip()
-        chon = self.chat_luong_var.get().strip()
-        option = None
-        for o in getattr(self, "chat_luong_options", []):
-            if o["label"] == chon:
-                option = o
-                break
+        option = self._lay_option_da_chon()
         if option is None:
             messagebox.showerror("Chưa chọn", "Chọn chất lượng tải về trước đã.")
             return
@@ -737,47 +978,55 @@ class App(tk.Tk):
         try:
             folder, ten_video, ten_audio, tong_dung_luong = tai_bang_idm(
                 url, option, cookies, outdir, self.log_threadsafe)
-            self.after(0, self._idm_xong, folder, ten_video, ten_audio,
-                       tong_dung_luong)
+            self.after_an_toan(0, self._idm_xong, folder, ten_video, ten_audio,
+                               tong_dung_luong)
         except Exception as e:
-            self.after(0, self._idm_loi, str(e))
+            self.after_an_toan(0, self._idm_loi, str(e))
         finally:
-            self.after(0, lambda: self.btn_idm.config(state="normal"))
+            self.after_an_toan(
+                0, lambda: self.btn_idm.config(state="normal"))
 
     def _idm_xong(self, folder, ten_video, ten_audio, tong_dung_luong):
         self.status_var.set("Đã đẩy sang IDM, đang theo dõi tiến độ...")
         self.ghi_log("ĐÃ ĐẨY SANG IDM. IDM đang tải 2 file vào: " + folder)
+        self.job["folder"] = folder
+        self.job["tong_dung_luong"] = tong_dung_luong
+        self.luu_job_hien_tai(status="dang_tai_idm")
         messagebox.showinfo(
             "Đã đẩy sang IDM",
             "IDM đang tải 2 file:\n- %s\n- %s\n\nTool sẽ hiện %% tải ở thanh "
-            "tiến độ bên dưới, tải xong tự điền 2 file vào mục Gộp."
+            "tiến độ bên dưới (quét dung lượng cả thư mục nên đếm đủ cả "
+            "file tiếng), tải xong sẽ tự nhận diện và tự gộp luôn."
             % (ten_video, ten_audio or "(chỉ có hình)"))
+        self.dang_theo_doi_idm = True
         threading.Thread(target=self._theo_doi_idm,
-                         args=(folder, ten_video, ten_audio, tong_dung_luong),
+                         args=(folder, tong_dung_luong),
                          daemon=True).start()
 
-    def _cap_nhat_tien_trinh(self, ty_le):
-        self.tien_trinh_idm["value"] = ty_le
-        self.phan_tram_var.set("%d%%" % ty_le)
-        self.status_var.set("IDM đang tải... %d%%" % ty_le)
+    def _cap_nhat_tien_trinh_tai(self, ty_le):
+        if not self.con_song():
+            return
+        try:
+            self.tien_trinh_idm["value"] = ty_le
+            self.phan_tram_var.set("%d%%" % ty_le)
+            self.status_var.set("IDM đang tải... %d%%" % ty_le)
+        except Exception:
+            pass
 
-    def _theo_doi_idm(self, folder, ten_video, ten_audio, tong_dung_luong):
-        """Theo dõi tiến độ tải của IDM bằng cách đo dung lượng file đang
-        lớn dần. Khi đủ dung lượng (hoặc file ngừng lớn sau 3 lần đo) thì
-        coi là tải xong, tự điền 2 file vào mục Gộp."""
-        duong_video = os.path.join(folder, ten_video)
-        duong_audio = os.path.join(folder, ten_audio) if ten_audio else None
+    def _theo_doi_idm(self, folder, tong_dung_luong):
+        """(v6) Theo dõi tiến độ tải của IDM bằng cách QUÉT dung lượng mọi
+        file media trong thư mục (kể cả .m4s, bất kể tên file) thay vì chỉ
+        đo 2 đường dẫn cố định như v5. Sửa lỗi v5 chỉ hiện 77% vì file
+        tiếng IDM lưu thực tế là .m4s, không phải .m4a như tên đã đặt.
+        Khi đủ dung lượng (hoặc file ngừng lớn) thì tự nhận diện cặp file
+        rồi tự gộp luôn (nếu bật)."""
         lan_khong_doi = 0
         kich_truoc = -1
-        while True:
+        while self.dang_theo_doi_idm and not self.da_dong:
             time.sleep(2)
-            kich_hien = 0
-            for p in (duong_video, duong_audio):
-                if p and os.path.isfile(p):
-                    try:
-                        kich_hien += os.path.getsize(p)
-                    except OSError:
-                        pass
+            if not self.dang_theo_doi_idm or self.da_dong:
+                return
+            kich_hien = quet_dung_luong_thu_muc(folder)
             if kich_hien == kich_truoc and kich_hien > 0:
                 lan_khong_doi += 1
             else:
@@ -785,37 +1034,57 @@ class App(tk.Tk):
             kich_truoc = kich_hien
             if tong_dung_luong and tong_dung_luong > 0:
                 ty_le = min(100, int(kich_hien * 100 / tong_dung_luong))
-                self.after(0, self._cap_nhat_tien_trinh, ty_le)
+                self.after_an_toan(0, self._cap_nhat_tien_trinh_tai, ty_le)
                 if kich_hien >= tong_dung_luong:
                     break
                 if lan_khong_doi >= 15:
-                    self.after(0, self._tai_idm_dung,
-                               "File ngừng lớn trước khi đủ dung lượng "
-                               "dự kiến. Kiểm tra IDM xem có lỗi không.")
+                    self.after_an_toan(0, self._tai_idm_dung,
+                                       "File ngừng lớn trước khi đủ dung lượng "
+                                       "dự kiến. Kiểm tra IDM xem có lỗi không.")
                     return
             else:
                 if lan_khong_doi >= 3:
                     break
-        self.after(0, self._tai_idm_hoan_tat, folder, ten_video, ten_audio)
+        if self.da_dong or not self.dang_theo_doi_idm:
+            return
+        self.dang_theo_doi_idm = False
+        self.after_an_toan(0, self._tai_idm_hoan_tat, folder)
 
-    def _tai_idm_hoan_tat(self, folder, ten_video, ten_audio):
+    def _tai_idm_hoan_tat(self, folder):
         self.tien_trinh_idm["value"] = 100
         self.phan_tram_var.set("100%")
-        duong_video = os.path.join(folder, ten_video)
-        duong_audio = os.path.join(folder, ten_audio) if ten_audio else ""
-        if os.path.isfile(duong_video):
-            self.video_var.set(duong_video)
-        if duong_audio and os.path.isfile(duong_audio):
-            self.audio_var.set(duong_audio)
-        self.status_var.set("Tải xong. Bấm GỘP VIDEO để gộp.")
-        self.ghi_log("IDM TẢI XONG. Đã điền sẵn 2 file vào mục Gộp.")
-        messagebox.showinfo("Tải xong rồi!",
-                            "IDM đã tải xong 2 file.\nBấm GỘP VIDEO ở mục 2 "
-                            "để gộp lại.")
+        # Tự nhận diện cặp file thực tế trong thư mục (kể cả .m4s).
+        try:
+            video, audio = nhan_dien_cap(folder, self.ffmpeg or tim_ffmpeg())
+        except Exception as e:
+            self.status_var.set("Tải xong nhưng không nhận diện được cặp file.")
+            self.ghi_log("NHẬN DIỆN THẤT BẠI: " + str(e))
+            self.luu_job_hien_tai(status="cho_gop", pct_tai=100)
+            messagebox.showwarning("Tải xong",
+                                   "IDM đã tải xong nhưng tool không nhận diện "
+                                   "được đúng 2 file trong thư mục:\n%s\n\n%s"
+                                   % (folder, e))
+            return
+        duong_video = os.path.join(folder, video)
+        duong_audio = os.path.join(folder, audio)
+        self.video_var.set(duong_video)
+        self.audio_var.set(duong_audio)
+        self.status_var.set("Tải xong. Đã nhận diện 2 file.")
+        self.ghi_log("IDM TẢI XONG. Đã nhận diện: %s + %s" % (video, audio))
+        self.luu_job_hien_tai(status="cho_gop", pct_tai=100)
+        if self.tu_gop_var.get():
+            self.ghi_log("Tự gộp luôn (đã bật 'Tải xong tự gộp luôn').")
+            self.bam_gop()
+        else:
+            messagebox.showinfo("Tải xong rồi!",
+                                "IDM đã tải xong 2 file.\nBấm GỘP VIDEO ở mục 2 "
+                                "để gộp lại.")
 
     def _tai_idm_dung(self, msg):
+        self.dang_theo_doi_idm = False
         self.status_var.set("Tải IDM có vẻ dừng.")
         self.ghi_log("TẢI IDM DỪNG: " + msg)
+        self.luu_job_hien_tai(status="loi")
         messagebox.showwarning("Tải IDM có vẻ dừng", msg)
 
     def bam_xem(self):
@@ -828,13 +1097,15 @@ class App(tk.Tk):
     def _idm_loi(self, msg):
         self.status_var.set("Đẩy sang IDM thất bại.")
         self.ghi_log("ĐẨY SANG IDM THẤT BẠI: " + msg)
+        self.luu_job_hien_tai(status="loi")
         messagebox.showerror("Đẩy sang IDM thất bại", msg)
+
 
     # ---------- khung 2: gộp file ----------
     def chon_video(self):
         p = filedialog.askopenfilename(
             title="Chọn file video (hình)",
-            filetypes=[("Video", "*.mp4 *.m4a *.webm *.mkv"),
+            filetypes=[("Video", "*.mp4 *.m4a *.m4s *.webm *.mkv"),
                        ("Tất cả file", "*.*")])
         if p:
             self.video_var.set(p)
@@ -842,7 +1113,7 @@ class App(tk.Tk):
     def chon_audio(self):
         p = filedialog.askopenfilename(
             title="Chọn file audio (tiếng)",
-            filetypes=[("Video/Audio", "*.mp4 *.m4a *.webm *.mkv"),
+            filetypes=[("Video/Audio", "*.mp4 *.m4a *.m4s *.webm *.mkv"),
                        ("Tất cả file", "*.*")])
         if p:
             self.audio_var.set(p)
@@ -868,6 +1139,17 @@ class App(tk.Tk):
             self.outdir_var.set(folder)
             self.luu_cau_hinh()
             self.ghi_log("Thư mục lưu mặc định: " + folder)
+            self.luu_job_hien_tai()
+
+    def _cap_nhat_tien_trinh_gop(self, ty_le):
+        if not self.con_song():
+            return
+        try:
+            self.tien_trinh_gop["value"] = ty_le
+            self.phan_tram_gop_var.set("%d%%" % ty_le)
+            self.status_var.set("Đang gộp... %d%%" % ty_le)
+        except Exception:
+            pass
 
     def bam_gop(self):
         video = self.video_var.get().strip()
@@ -894,7 +1176,11 @@ class App(tk.Tk):
         self.ffmpeg = ffmpeg
         self.luu_cau_hinh()
         self.btn_gop.config(state="disabled")
+        self.dang_gop = True
+        self.tien_trinh_gop["value"] = 0
+        self.phan_tram_gop_var.set("0%")
         self.ghi_log("Đang gộp, chờ một chút...")
+        self.luu_job_hien_tai(status="dang_gop")
         threading.Thread(target=self._gop_worker,
                          args=(video, audio, outdir, ffmpeg),
                          daemon=True).start()
@@ -906,23 +1192,42 @@ class App(tk.Tk):
             os.makedirs(folder, exist_ok=True)
             out_name = ten_file_dau_ra(folder, ten)
             out_path = os.path.join(folder, out_name)
-            cmd = [ffmpeg, "-i", video, "-i", audio, "-c", "copy", out_path]
-            r = subprocess.run(cmd, capture_output=True, text=True,
-                               errors="replace", timeout=3600,
-                               **chay_ngam_kwargs())
-            if r.returncode != 0:
-                err = (r.stderr or "").strip().splitlines()[-5:]
-                raise RuntimeError("ffmpeg báo lỗi:\n" + "\n".join(err))
-            self.after(0, self._gop_xong, out_path, folder)
+            gop_co_tien_trinh(
+                video, audio, out_path, ffmpeg,
+                lambda pct: self.after_an_toan(
+                    0, self._cap_nhat_tien_trinh_gop, pct))
+            self.after_an_toan(0, self._gop_xong, out_path, folder,
+                               video, audio)
         except Exception as e:
-            self.after(0, self._gop_loi, str(e))
+            self.after_an_toan(0, self._gop_loi, str(e))
         finally:
-            self.after(0, lambda: self.btn_gop.config(state="normal"))
+            self.dang_gop = False
+            self.after_an_toan(
+                0, lambda: self.btn_gop.config(state="normal"))
 
-    def _gop_xong(self, out_path, folder):
+    def _gop_xong(self, out_path, folder, video, audio):
         self.ghi_log("GỘP XONG: " + out_path)
         self.thanh_qua = out_path
         self.btn_xem.config(state="normal")
+        self.tien_trinh_gop["value"] = 100
+        self.phan_tram_gop_var.set("100%")
+        self.status_var.set("Gộp xong.")
+        # (v6) Gộp xong tự xóa 2 file gốc cho nhẹ ổ, chỉ xóa sau khi gộp
+        # thành công và file gốc khác file thành phẩm.
+        if self.xoa_goc_var.get():
+            da_xoa = []
+            for p in (video, audio):
+                try:
+                    if p and os.path.isfile(p) and os.path.abspath(p) != os.path.abspath(out_path):
+                        os.remove(p)
+                        da_xoa.append(os.path.basename(p))
+                except Exception as e:
+                    self.ghi_log("Không xóa được %s: %s" % (p, e))
+            if da_xoa:
+                self.ghi_log("Đã xóa 2 file gốc cho nhẹ ổ: " + ", ".join(da_xoa))
+                self.video_var.set("")
+                self.audio_var.set("")
+        self.luu_job_hien_tai(status="xong", pct_gop=100)
         if messagebox.askyesno("Xong rồi!",
                                "Video đã gộp xong:\n" + out_path +
                                "\n\nMở thư mục chứa video?"):
@@ -930,8 +1235,197 @@ class App(tk.Tk):
 
     def _gop_loi(self, msg):
         self.ghi_log("GỘP THẤT BẠI: " + msg)
+        self.luu_job_hien_tai(status="loi")
         messagebox.showerror("Gộp thất bại", msg)
 
 
+class QuanLy(tk.Tk):
+    """(v6) Cửa sổ quản lý: nút + mở cửa sổ job mới, danh sách lịch sử job
+    (đọc từ jobs.json), mở lại / xóa job. Cài đặt chung (thư mục lưu,
+    cookies) dùng chung cho mọi cửa sổ job."""
+
+    def __init__(self):
+        super().__init__()
+        self.title(APP_TITLE + " - Quản lý (v6)")
+        self.geometry("640x520")
+        self.resizable(True, True)
+        self.cua_so_mo = {}
+
+        cfg = doc_config()
+        self.outdir_var = tk.StringVar(
+            value=cfg.get("output_dir") or mac_dinh_thu_muc_luu())
+        self.cookies_var = tk.StringVar(
+            value=cfg.get("cookies") or (
+                COOKIES_MAC_DINH if os.path.isfile(COOKIES_MAC_DINH) else ""))
+
+        pad = {"padx": 8, "pady": 4}
+
+        hang_nut = tk.Frame(self)
+        hang_nut.grid(row=0, column=0, columnspan=3, sticky="ew", **pad)
+        tk.Button(hang_nut, text="+ Mở cửa sổ mới", font=("", 11, "bold"),
+                  command=self.mo_cua_so_moi).pack(side="left", padx=4)
+        tk.Button(hang_nut, text="Mở lại job đã chọn",
+                  command=self.mo_lai_job_da_chon).pack(side="left", padx=4)
+        tk.Button(hang_nut, text="Xóa job đã chọn",
+                  command=self.xoa_job_da_chon).pack(side="left", padx=4)
+
+        tk.Label(self, text="Lịch sử job (bấm đúp để mở lại cửa sổ):").grid(
+            row=1, column=0, columnspan=3, sticky="w", **pad)
+        cot = ("ten", "trang_thai", "tai", "gop")
+        self.bang = ttk.Treeview(self, columns=cot, show="headings", height=12)
+        self.bang.heading("ten", text="Video")
+        self.bang.heading("trang_thai", text="Trạng thái")
+        self.bang.heading("tai", text="% tải")
+        self.bang.heading("gop", text="% gộp")
+        self.bang.column("ten", width=300)
+        self.bang.column("trang_thai", width=130)
+        self.bang.column("tai", width=60, anchor="center")
+        self.bang.column("gop", width=60, anchor="center")
+        self.bang.grid(row=2, column=0, columnspan=3, sticky="nsew", **pad)
+        self.bang.bind("<Double-1>", lambda e: self.mo_lai_job_da_chon())
+
+        tk.Label(self, text="Thư mục lưu:").grid(row=3, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.outdir_var).grid(
+            row=3, column=1, sticky="ew", **pad)
+        tk.Button(self, text="Chọn...",
+                  command=self.chon_thu_muc_luu).grid(row=3, column=2, **pad)
+        tk.Label(self, text="File cookies.txt (để tải 1080p):").grid(
+            row=4, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.cookies_var).grid(
+            row=4, column=1, sticky="ew", **pad)
+        tk.Button(self, text="Chọn...",
+                  command=self.chon_cookies).grid(row=4, column=2, **pad)
+        tk.Label(self, text="Mỗi cửa sổ xử lý 1 video (tải + gộp). Đóng cửa sổ "
+                 "khi xong, hoặc đóng = hủy theo dõi (job vẫn lưu trong lịch sử).",
+                 fg="gray", wraplength=600, justify="left").grid(
+            row=5, column=0, columnspan=3, sticky="w", **pad)
+
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+        self.protocol("WM_DELETE_WINDOW", self.dong_quan_ly)
+
+        self.cap_nhat_bang()
+        # Tự mở lại cửa sổ cho các job chưa xong để tiếp tục.
+        for job in doc_jobs():
+            if job.get("status") in ("dang_tai_idm", "cho_gop", "dang_gop",
+                                     "da_kiem_tra"):
+                self.mo_cua_so_job(job)
+
+    # ---------- tiện ích ----------
+    def luu_cau_hinh(self):
+        luu_config({"output_dir": self.outdir_var.get().strip(),
+                    "cookies": self.cookies_var.get().strip()})
+
+    def cap_nhat_job(self, job):
+        jobs = doc_jobs()
+        for i, j in enumerate(jobs):
+            if j.get("id") == job.get("id"):
+                jobs[i] = job
+                break
+        else:
+            jobs.append(job)
+        luu_jobs(jobs)
+        self.cap_nhat_bang()
+
+    def cap_nhat_bang(self):
+        try:
+            for item in self.bang.get_children():
+                self.bang.delete(item)
+            for job in doc_jobs():
+                self.bang.insert("", "end", iid=job.get("id"),
+                                 values=(job.get("title") or "(chưa có tên)",
+                                         dinh_dang_trang_thai(job.get("status") or "moi"),
+                                         "%d%%" % (job.get("pct_tai") or 0),
+                                         "%d%%" % (job.get("pct_gop") or 0)))
+        except Exception:
+            pass
+
+    def chon_thu_muc_luu(self):
+        folder = filedialog.askdirectory(title="Chọn thư mục lưu mặc định")
+        if folder:
+            self.outdir_var.set(folder)
+            self.luu_cau_hinh()
+
+    def chon_cookies(self):
+        p = filedialog.askopenfilename(
+            title="Chọn file cookies.txt",
+            filetypes=[("Text", "*.txt"), ("Tất cả file", "*.*")])
+        if p:
+            self.cookies_var.set(p)
+            self.luu_cau_hinh()
+
+    # ---------- cửa sổ job ----------
+    def mo_cua_so_moi(self):
+        self.luu_cau_hinh()
+        job = {"id": str(uuid.uuid4())[:8], "title": "", "link": "",
+               "status": "moi", "pct_tai": 0, "pct_gop": 0,
+               "tu_gop": True, "xoa_goc": True}
+        self.mo_cua_so_job(job)
+
+    def mo_cua_so_job(self, job):
+        jid = job.get("id")
+        if jid in self.cua_so_mo:
+            try:
+                win = self.cua_so_mo[jid]
+                win.lift()
+                win.focus_set()
+                return
+            except Exception:
+                pass
+        self.luu_cau_hinh()
+        win = CuaSoJob(self, job)
+        self.cua_so_mo[jid] = win
+
+    def dong_cua_so_job(self, job_id):
+        self.cua_so_mo.pop(job_id, None)
+        self.cap_nhat_bang()
+
+    def _job_da_chon(self):
+        sel = self.bang.selection()
+        if not sel:
+            messagebox.showinfo("Chưa chọn", "Chọn một job trong danh sách trước đã.")
+            return None
+        jid = sel[0]
+        for job in doc_jobs():
+            if job.get("id") == jid:
+                return job
+        return None
+
+    def mo_lai_job_da_chon(self):
+        job = self._job_da_chon()
+        if job:
+            self.mo_cua_so_job(job)
+
+    def xoa_job_da_chon(self):
+        job = self._job_da_chon()
+        if not job:
+            return
+        if not messagebox.askyesno("Xóa job",
+                                   "Xóa job này khỏi lịch sử?\n%s"
+                                   % (job.get("title") or "(chưa có tên)")):
+            return
+        jobs = [j for j in doc_jobs() if j.get("id") != job.get("id")]
+        luu_jobs(jobs)
+        self.cap_nhat_bang()
+
+    def dong_quan_ly(self):
+        self.luu_cau_hinh()
+        if self.cua_so_mo:
+            if not messagebox.askyesno(
+                    "Còn cửa sổ job đang mở",
+                    "Còn %d cửa sổ job đang mở. Đóng hết (job vẫn lưu trong "
+                    "lịch sử, lần sau mở lại tiếp tục được)?"
+                    % len(self.cua_so_mo)):
+                return
+            for win in list(self.cua_so_mo.values()):
+                try:
+                    win.da_dong = True
+                    win.destroy()
+                except Exception:
+                    pass
+            self.cua_so_mo.clear()
+        self.destroy()
+
+
 if __name__ == "__main__":
-    App().mainloop()
+    QuanLy().mainloop()

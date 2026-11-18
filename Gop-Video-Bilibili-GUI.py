@@ -31,6 +31,11 @@ Nếu vẫn trùng (cùng giây) thì thêm (1), (2)... cho đến khi hết tr�
 v6.7: repo đã public nên Kiểm tra cập nhật KHÔNG cần token GitHub nữa:
 ấn là kiểm tra luôn, không hỏi token; token cũ nếu đã lưu thì vẫn dùng
 kèm cho đỡ giới hạn lượt gọi API, không có token thì gọi API công khai.
+v6.8: mở lại job cũ vẫn hiện link + tên phim đã lưu; gộp ở mục 2 thì
+lấy tên phim từ tên file hình, bỏ hậu tố _hinh/_tieng rồi dịch sang
+tiếng Việt, đặt tên file thành phẩm đúng tên phim tiếng Việt đó rồi
+mới báo hoàn thành, đồng thời hiển thị tên phim tiếng Việt trong
+cửa sổ job, bảng lịch sử và thông báo xong.
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -67,7 +72,7 @@ import zipfile
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 APP_TITLE = "Chipchipdownload"
-VERSION = "6.7"
+VERSION = "6.8"
 GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
 GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
                              + GITHUB_REPO + "/releases/latest")
@@ -645,6 +650,19 @@ def ten_phim_tieng_viet(ten_goc):
     """(v6.5) Tên phim dùng cho thư mục / file: tên đã dịch sang tiếng Việt,
     làm sạch ký tự cấm trên Windows. Thư mục tạo ra trùng tên phim này."""
     return sanitize_ten(dich_ten_sang_tieng_viet(ten_goc))
+
+
+def ten_phim_tu_ten_file(duong_file):
+    """(v6.8) Lấy tên phim tiếng Việt từ tên file hình: bỏ đuôi file,
+    bỏ hậu tố _hinh/_tieng/-hinh/-tieng và (1), (2)... rồi dịch sang
+    tiếng Việt. Vd: 'Tên Trung_hinh.mp4' -> tên phim tiếng Việt."""
+    ten = os.path.splitext(os.path.basename(duong_file or ""))[0].strip()
+    for hau_to in ("_hinh", "_tieng", "-hinh", "-tieng"):
+        if ten.lower().endswith(hau_to):
+            ten = ten[:-len(hau_to)].strip()
+            break
+    ten = re.sub(r"\(\d+\)\s*$", "", ten).strip()
+    return ten_phim_tieng_viet(ten)
 
 
 def luu_file_thong_tin_phim(folder, ten_goc, ten_viet, url, chat_luong=""):
@@ -1404,13 +1422,23 @@ class CuaSoJob(tk.Toplevel):
                 0, lambda: self.btn_tai.config(state="normal"))
 
     def _tai_xong(self, out_path, folder):
-        self.status_var.set("Tải xong.")
+        # (v6.8) Tên phim tiếng Việt = tên file thành phẩm, hiển thị rõ
+        # trong tool rồi mới báo hoàn thành.
+        ten_viet = os.path.splitext(os.path.basename(out_path))[0]
+        self.job["title"] = ten_viet
+        if self.link_info:
+            self.link_info["title"] = ten_viet
+        self.title("%s - %s" % (APP_TITLE, ten_viet[:60]))
+        self.info_var.set("Tiêu đề: %s" % ten_viet)
+        self.status_var.set("Tải xong: %s" % ten_viet)
         self.thanh_qua = out_path
         self.btn_xem.config(state="normal")
-        self.ghi_log("TẢI XONG: " + out_path)
+        self.ghi_log("TẢI XONG: %s - %s" % (ten_viet, out_path))
         self.luu_job_hien_tai(status="xong", pct_tai=100, pct_gop=100)
         if messagebox.askyesno("Xong rồi!",
-                               "Video đã tải + gộp xong:\n" + out_path +
+                               "Video đã tải + gộp xong:\n"
+                               "Tên phim: %s\nFile: %s"
+                               % (ten_viet, out_path) +
                                "\n\nMở thư mục chứa video?"):
             os.startfile(folder)
 
@@ -1690,17 +1718,26 @@ class CuaSoJob(tk.Toplevel):
 
     def _gop_worker(self, video, audio, outdir, ffmpeg):
         try:
-            ten = os.path.splitext(os.path.basename(video))[0]
-            folder = os.path.join(outdir, ten)
+            # (v6.8) Dịch tên phim sang tiếng Việt trước khi gộp: lấy
+            # tên từ file hình, bỏ _hinh/_tieng rồi dịch. File thành
+            # phẩm đặt đúng tên phim tiếng Việt đó, không còn _hinh.
+            ten_viet = ten_phim_tu_ten_file(video)
+            # Nếu 2 file đã nằm sẵn trong thư mục phim thì gộp ra ngay
+            # trong thư mục đó; còn file lẻ thì tạo thư mục tên phim.
+            thu_muc_video = os.path.dirname(os.path.abspath(video))
+            if thu_muc_video != os.path.abspath(outdir):
+                folder = thu_muc_video
+            else:
+                folder = tao_thu_muc_duy_nhat(outdir, ten_viet)
             os.makedirs(folder, exist_ok=True)
-            out_name = ten_file_dau_ra(folder, ten)
+            out_name = ten_file_dau_ra(folder, ten_viet)
             out_path = os.path.join(folder, out_name)
             gop_co_tien_trinh(
                 video, audio, out_path, ffmpeg,
                 lambda pct: self.after_an_toan(
                     0, self._cap_nhat_tien_trinh_gop, pct))
             self.after_an_toan(0, self._gop_xong, out_path, folder,
-                               video, audio)
+                               video, audio, ten_viet)
         except Exception as e:
             self.after_an_toan(0, self._gop_loi, str(e))
         finally:
@@ -1708,13 +1745,21 @@ class CuaSoJob(tk.Toplevel):
             self.after_an_toan(
                 0, lambda: self.btn_gop.config(state="normal"))
 
-    def _gop_xong(self, out_path, folder, video, audio):
-        self.ghi_log("GỘP XONG: " + out_path)
+    def _gop_xong(self, out_path, folder, video, audio, ten_viet=None):
+        # (v6.8) Hiển thị tên phim tiếng Việt trong tool rồi mới báo xong.
+        if not ten_viet:
+            ten_viet = ten_phim_tu_ten_file(video)
+        self.job["title"] = ten_viet
+        if self.link_info:
+            self.link_info["title"] = ten_viet
+        self.title("%s - %s" % (APP_TITLE, ten_viet[:60]))
+        self.info_var.set("Tiêu đề: %s" % ten_viet)
+        self.ghi_log("GỘP XONG: %s - %s" % (ten_viet, out_path))
         self.thanh_qua = out_path
         self.btn_xem.config(state="normal")
         self.tien_trinh_gop["value"] = 100
         self.phan_tram_gop_var.set("100%")
-        self.status_var.set("Gộp xong.")
+        self.status_var.set("Gộp xong: %s" % ten_viet)
         # (v6) Gộp xong tự xóa 2 file gốc cho nhẹ ổ, chỉ xóa sau khi gộp
         # thành công và file gốc khác file thành phẩm.
         if self.xoa_goc_var.get():
@@ -1732,7 +1777,9 @@ class CuaSoJob(tk.Toplevel):
                 self.audio_var.set("")
         self.luu_job_hien_tai(status="xong", pct_gop=100)
         if messagebox.askyesno("Xong rồi!",
-                               "Video đã gộp xong:\n" + out_path +
+                               "Video đã gộp xong:\n"
+                               "Tên phim: %s\nFile: %s"
+                               % (ten_viet, out_path) +
                                "\n\nMở thư mục chứa video?"):
             os.startfile(folder)
 

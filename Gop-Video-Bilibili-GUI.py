@@ -28,6 +28,9 @@ v6.6: thư mục trùng tên thì không ghi đè: tạo thêm thư mục mới 
 "<tên phim tiếng Việt> - YYYY-MM-DD HH-MM-SS" (ngày-giờ, không dùng dấu
 ":" vì Windows cấm, tên đã làm sạch ký tự cấm và cắt tối đa 100 ký tự).
 Nếu vẫn trùng (cùng giây) thì thêm (1), (2)... cho đến khi hết trùng.
+v6.7: repo đã public nên Kiểm tra cập nhật KHÔNG cần token GitHub nữa:
+ấn là kiểm tra luôn, không hỏi token; token cũ nếu đã lưu thì vẫn dùng
+kèm cho đỡ giới hạn lượt gọi API, không có token thì gọi API công khai.
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -64,7 +67,7 @@ import zipfile
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 APP_TITLE = "Chipchipdownload"
-VERSION = "6.6"
+VERSION = "6.7"
 GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
 GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
                              + GITHUB_REPO + "/releases/latest")
@@ -403,8 +406,9 @@ def so_sanh_version(a, b):
 
 def lay_token_github():
     """Token GitHub chỉ-đọc repo này (do người dùng nhập 1 lần, lưu ở
-    config.json cạnh exe). Repo là private nên không có token thì không
-    đọc được Release/version.json trên GitHub."""
+    config.json cạnh exe). (v6.7) Repo đã public nên token không bắt buộc
+    nữa; có token thì kèm theo cho đỡ giới hạn lượt gọi API, không có
+    thì vẫn kiểm tra được bằng API công khai."""
     return (doc_config().get("github_token") or "").strip()
 
 
@@ -415,13 +419,16 @@ def luu_token_github(token):
 
 
 def goi_github_api(url, token):
-    """GET JSON từ GitHub API (cần token vì repo private). (v6.3) Dùng
-    mo_url_co_fallback_ssl: xác minh chứng chỉ trước, fallback bỏ xác minh
-    chỉ khi lỗi chứng chỉ (cùng lỗi SSL như khi tự tải yt-dlp)."""
-    req = urllib.request.Request(
-        url, headers={"Accept": "application/vnd.github+json",
-                      "User-Agent": UA_TRINH_DUYET,
-                      "Authorization": "token " + token})
+    """GET JSON từ GitHub API. (v6.3) Dùng mo_url_co_fallback_ssl: xác
+    minh chứng chỉ trước, fallback bỏ xác minh chỉ khi lỗi chứng chỉ
+    (cùng lỗi SSL như khi tự tải yt-dlp). (v6.7) Repo đã public nên
+    token không bắt buộc: có token thì kèm Authorization, không có
+    thì gọi API công khai."""
+    headers = {"Accept": "application/vnd.github+json",
+               "User-Agent": UA_TRINH_DUYET}
+    if (token or "").strip():
+        headers["Authorization"] = "token " + token.strip()
+    req = urllib.request.Request(url, headers=headers)
     with mo_url_co_fallback_ssl(req, 60) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -430,9 +437,8 @@ def kiem_tra_cap_nhat(token):
     """(v6.2) Kiểm tra bản mới trên GitHub. Trả về dict:
     {version_moi, tag, tai_url, ten_file} hoặc None nếu đã là bản mới nhất.
     Ưu tiên đọc GitHub Releases (latest); nếu chưa có Release nào thì đọc
-    version.json trong repo. Raise RuntimeError nếu không đọc được."""
-    if not token:
-        raise RuntimeError("CHUA_CO_TOKEN")
+    version.json trong repo. Raise RuntimeError nếu không đọc được.
+    (v6.7) Repo đã public nên token không bắt buộc nữa."""
     # 1) Thử Releases/latest.
     try:
         data = goi_github_api(GITHUB_API_LATEST_RELEASE, token)
@@ -484,9 +490,11 @@ def tai_ban_moi_va_cap_nhat(tai_url, token, log_cb=None):
     file_moi = os.path.join(thu_muc, ten_exe + ".new")
     if log_cb:
         log_cb("Đang tải bản mới về...")
+    headers = {"Accept": "application/octet-stream"}
+    if (token or "").strip():
+        headers["Authorization"] = "token " + token.strip()
     tai_file_qua_url(tai_url, file_moi, 600, log_cb, "bản mới",
-                     headers={"Accept": "application/octet-stream",
-                              "Authorization": "token " + token})
+                     headers=headers)
     if not os.path.isfile(file_moi) or os.path.getsize(file_moi) < 1000000:
         _xoa_file_quiet(file_moi)
         raise RuntimeError("Tải bản mới về nhưng file không hợp lệ.")
@@ -1907,38 +1915,11 @@ class QuanLy(tk.Tk):
 
     # ---------- cập nhật (v6.2) ----------
     def bam_kiem_tra_cap_nhat(self):
-        """Nút Kiểm tra cập nhật: repo là private nên cần token GitHub
-        chỉ-đọc repo này. Chưa có token thì hỏi nhập (lưu vào config.json),
-        có rồi thì kiểm tra bản mới trên GitHub Releases."""
+        """Nút Kiểm tra cập nhật: (v6.7) repo đã public nên KHÔNG cần
+        token GitHub nữa, ấn là kiểm tra luôn trên GitHub Releases.
+        Token cũ nếu đã lưu thì vẫn kèm theo cho đỡ giới hạn lượt gọi
+        API, không có token thì vẫn kiểm tra được."""
         token = lay_token_github()
-        if not token:
-            if not messagebox.askyesno(
-                    "Cần token GitHub để kiểm tra cập nhật",
-                    "Repo %s là repo riêng (private) nên tool cần 1 token "
-                    "GitHub CHỈ ĐỌC repo này để kiểm tra bản mới.\n\n"
-                    "Cách lấy token (1 lần): vào GitHub → Settings → "
-                    "Developer settings → Personal access tokens → "
-                    "Fine-grained tokens → Generate new token → chỉ chọn "
-                    "repo %s, quyền Contents: Read-only.\n\n"
-                    "Bấm Có để nhập token ngay, bấm Không để xem hướng dẫn "
-                    "tải bản mới bằng tay." % (GITHUB_REPO, GITHUB_REPO)):
-                messagebox.showinfo(
-                    "Phiên bản hiện tại: v%s" % VERSION,
-                    "Bản đang dùng: v%s.\n\n"
-                    "Để lấy bản mới bằng tay: mở %s trên trình duyệt "
-                    "(đăng nhập tài khoản GitHub có quyền xem repo), tải "
-                    "file %s.exe bản mới nhất về rồi ghi đè lên file exe "
-                    "đang dùng." % (VERSION, GITHUB_RELEASES_URL, APP_TITLE))
-                return
-            token = simpledialog.askstring(
-                "Nhập token GitHub (chỉ đọc)",
-                "Dán token GitHub fine-grained (chỉ chọn repo %s,\n"
-                "quyền Contents: Read-only):" % GITHUB_REPO,
-                show="*")
-            if not token or not token.strip():
-                return
-            luu_token_github(token.strip())
-            token = token.strip()
         threading.Thread(target=self._cap_nhat_worker,
                          args=(token,), daemon=True).start()
 

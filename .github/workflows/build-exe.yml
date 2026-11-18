@@ -62,6 +62,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download EXE artifact
         uses: actions/download-artifact@v4
         with:

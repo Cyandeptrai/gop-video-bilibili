@@ -50,6 +50,23 @@ ly phu de (dich bang Muse/GPT/Gemini, key luu local, xuat prompt+SRT);
 tab Doc phu de HoaiMy. Chi 1 luong cap nhat duy nhat (ChipChip):
 SRT Reader von la portable, khi gop thi thanh tool setup cai 1 lan,
 va chi bam Cap nhat trong tool la len ban moi, khong cai lai.
+v7.1 (SUA LAI - BO GIOI HAN 15 PHUT): gioi han "chi tach giong cho
+video ngan hon 15 phut" la GIOI HAN CUA CAPCUT, khong phai quy tac
+cua ChipChipStudio - CYAN dinh chinh 19/11. CapCut chi tach duoc
+video <15 phut nen voi phim dai cua CYAN thi KHONG dung duoc CapCut.
+ChipChipStudio BO HAN cua 15 phut: khong co bat ky logic nao chan
+tach giong theo thoi luong. Phuong an thuc te cho phim dai la GIAM
+am luong tieng goc xuong 15% (ffmpeg volume=0.15) truoc khi gop voi
+giong Viet. Nut tach giong AI DA BO HAN theo lenh CYAN 19/11 04:38: bo qua han
+tach giong bang AI, chi giu phan de: giam tieng goc xuong 15% + tu
+giam tieng nen khi co loi bang FFmpeg sidechaincompress.
+v7.2 (BAN CUOI): bo han tach giong AI; co file MP3 giong Viet HoaiMy
+trong cung thu muc du an thi tron 2 track bang FFmpeg sidechaincompress
+- nhac nen (tieng goc da giam) tu nho xuong khi co loi, to lai khi het
+loi. Chua co giong thi chi giam co dinh tieng goc xuong 15% truoc khi
+gop. Khong gioi han thoi luong, chay bang FFmpeg, khong dung AI tach
+giong. File tron xong luu cung thu muc du an. Moi thu cung 1 thu muc
+du an, file goc khong doi.
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -94,7 +111,7 @@ from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 # Cap nhat. Chi co 1 luong cap nhat duy nhat (cua ChipChip).
 APP_TITLE = "Chipchipdownload"
 STUDIO_TITLE = "ChipChipStudio"
-VERSION = "7.0"
+VERSION = "7.2"
 GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
 GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
                              + GITHUB_REPO + "/releases/latest")
@@ -1417,6 +1434,193 @@ def gop_co_tien_trinh(video, audio, out_path, ffmpeg, tien_trinh_cb):
     tien_trinh_cb(100)
     return out_path
 
+
+# ======================================================================
+# v7.2 - XU LY TIENG GOC KHI LONG TIENG VIET (BAN CUOI)
+# Dinh chinh 19/11: gioi han 15 phut la cua CapCut (CapCut chi tach
+# giong cho video < 15 phut), KHONG phai quy tac cua ChipChipStudio.
+# Code nay KHONG co bat ky cua thoi luong nao: thoi luong chi duoc
+# doc de ghi log, khong dung de chan.
+# - "Bo loi" (CapCut) = bo giong noi, giu nhac nen, de long tieng Viet.
+# - CYAN lenh 19/11 04:38: BO QUA HAN tach giong bang AI (khong lam
+#   tach giong kho bang AI trong ChipChipStudio nua). Chi giu phan de:
+# - Phuong an mac dinh: giam tieng goc xuong 15% (ffmpeg volume=0.15)
+#   roi gop chung voi giong Viet (amix).
+# - Tu giam tieng nen khi co loi (mac dinh BAT): neu da co file MP3
+#   giong Viet HoaiMy trong cung thu muc du an thi tron 2 track bang
+#   FFmpeg sidechaincompress - nhac nen tu nho xuong khi co loi, to
+#   lai khi het loi. Chua co giong thi chi giam co dinh 15%.
+# - Khong gioi han thoi luong. Chi dung FFmpeg, khong dung AI.
+# - Moi file ra deu cung thu muc du an, file goc khong bi ghi de.
+# ======================================================================
+AM_LUONG_TIENG_GOC_KHI_LONG_TIENG = 0.15  # 15% - muc CYAN chot
+# Ghi chu: con so 15 phut cua CapCut KHONG dung o day, chi ghi lai de
+# giai thich tai sao khong dung CapCut cho phim dai.
+GIOI_HAN_CAPCUT_PHUT = 15  # chi la ghi chu, KHONG dung lam cua chan
+# (v7.2) Thong so sidechaincompress cho tu giam tieng nen khi co loi:
+# threshold=0.03: giong Viet noi to hon muc nay thi bat dau nen nhac
+# xuong (giong doc thuong to, nhac nen da giam 15% nen nguong nay
+# vua du de khong bi kich nham boi nhac nen). ratio=8: khi co loi,
+# nhac nen bi nen xuong manh (kha nang nghe thay ro). attack=200ms:
+# giam xuong trong 200ms (khong giat cuc, khong cat mat dau cau).
+# release=1000ms: het loi 1 giay moi to lai tu tu (khong giat len
+# xuong lien tuc giua cac khoang ngat cau). makeup=1: khong tang
+# bu am luong nhac nen sau khi nen.
+SIDECHAIN_THRESHOLD = 0.03
+SIDECHAIN_RATIO = 8
+SIDECHAIN_ATTACK_MS = 200
+SIDECHAIN_RELEASE_MS = 1000
+
+
+def quyet_dinh_xu_ly_tieng_goc(tu_giam_tieng_nen=True,
+                              co_giong_viet=False):
+    """(v7.2) Quyet dinh xu ly tieng goc. Tra ve (che_do, ly_do).
+    Chi con 2 duong, KHONG co tach giong AI, KHONG co cua thoi luong:
+    - "sidechain": da co file giong Viet + cong tac tu giam dang BAT
+      -> tron bang FFmpeg sidechaincompress.
+    - "giam_15": chua co giong Viet, hoac cong tac dang TAT -> chi
+      giam co dinh tieng goc xuong 15% truoc khi gop."""
+    if tu_giam_tieng_nen and co_giong_viet:
+        return ("sidechain",
+                "Da co file giong Viet HoaiMy + cong tac tu giam dang "
+                "BAT - tron bang FFmpeg sidechaincompress: nhac nen tu "
+                "nho xuong khi co loi, to lai khi het loi.")
+    if tu_giam_tieng_nen and not co_giong_viet:
+        return ("giam_15",
+                "Cong tac tu giam dang BAT nhung chua co file giong "
+                "Viet trong thu muc du an nen chi giam co dinh tieng "
+                "goc xuong 15% truoc khi gop.")
+    return ("giam_15",
+            "Cong tac tu giam dang TAT - chi giam co dinh tieng goc "
+            "xuong 15% truoc khi gop voi giong Viet.")
+
+
+def lenh_giam_am_luong_15(ffmpeg, video, audio_goc, out_path):
+    """(v7.1) Lenh ffmpeg giam tieng goc xuong 15% roi gop voi hinh.
+    Video copy nguyen, audio encode lai aac. Dung khi khong co file
+    long tieng Viet rieng. Tra ve list lenh (chua chay)."""
+    return [ffmpeg, "-y", "-i", video, "-i", audio_goc,
+            "-filter_complex",
+            "[1:a]volume=0.15[aout]",
+            "-map", "0:v", "-map", "[aout]",
+            "-c:v", "copy", "-c:a", "aac", out_path]
+
+
+def lenh_gop_voi_long_tieng(ffmpeg, video, audio_goc, audio_long, out_path,
+                           am_luong_goc=AM_LUONG_TIENG_GOC_KHI_LONG_TIENG,
+                           tu_giam_tieng_nen=True):
+    """(v7.2) Lenh ffmpeg gop hinh + tieng goc + giong Viet long tieng.
+    - tu_giam_tieng_nen=True (mac dinh): tieng goc giam con
+      am_luong_goc (0.15 = 15%) roi qua sidechaincompress, lay giong
+      Viet lam sidechain: nhac nen tu nho xuong khi co loi, to lai
+      khi het loi. Sau do amix voi giong Viet o muc day du.
+    - False: chi amix don gian (tieng goc giam 15% + giong day du).
+    Tra ve list lenh (chua chay). Khong gioi han thoi luong."""
+    if tu_giam_tieng_nen:
+        fc = ("[1:a]volume=%.2f[nen];"
+              "[nen][2:a]sidechaincompress=threshold=%.2f:ratio=%d:"
+              "attack=%d:release=%d[nen_duc];"
+              "[nen_duc][2:a]amix=inputs=2:duration=longest[aout]"
+              % (am_luong_goc, SIDECHAIN_THRESHOLD, SIDECHAIN_RATIO,
+                 SIDECHAIN_ATTACK_MS, SIDECHAIN_RELEASE_MS))
+    else:
+        fc = ("[1:a]volume=%.2f[nen];[2:a]volume=1.0[long];"
+              "[nen][long]amix=inputs=2:duration=longest[aout]"
+              % am_luong_goc)
+    return [ffmpeg, "-y", "-i", video, "-i", audio_goc, "-i", audio_long,
+            "-filter_complex", fc,
+            "-map", "0:v", "-map", "[aout]",
+            "-c:v", "copy", "-c:a", "aac", out_path]
+
+
+def tim_file_long_tieng(thu_muc, ten_viet=""):
+    """(v7.2) Tim file MP3 giong Viet HoaiMy trong cung thu muc du an.
+    Uu tien file co ten <ten_viet>_long-tieng.mp3 hoac bat ky file
+    .mp3 nao co 'long-tieng' / 'long_tieng' trong ten. Tra ve duong
+    dan hoac None neu chua co. Khong doi ten, khong di chuyen file."""
+    if not thu_muc or not os.path.isdir(thu_muc):
+        return None
+    ung_vien = []
+    for ten in sorted(os.listdir(thu_muc)):
+        if not ten.lower().endswith(".mp3"):
+            continue
+        ten_thap = ten.lower()
+        if "long-tieng" in ten_thap or "long_tieng" in ten_thap:
+            duong = os.path.join(thu_muc, ten)
+            if ten_viet and ten.startswith(ten_viet + "_long-tieng"):
+                return duong  # khop dung ten phim -> lay ngay
+            ung_vien.append(duong)
+    return ung_vien[0] if ung_vien else None
+
+
+def ten_file_da_tron(thu_muc, ten_viet):
+    """(v7.2) Ten file tron xong, cung thu muc du an, khong trung:
+    <ten_viet>_da-tron.mp4, <ten_viet>_da-tron(1).mp4..."""
+    return ten_file_dau_ra(thu_muc, ten_viet + "_da-tron")
+
+
+def gop_voi_long_tieng(video, audio_goc, audio_long, out_path, ffmpeg,
+                      tien_trinh_cb, tu_giam_tieng_nen=True, log_cb=None):
+    """(v7.2) Gop hinh + tieng goc (da xu ly) + giong Viet long tieng.
+    - Doc thoi luong bang ffprobe CHI DE GHI LOG, khong dung de chan.
+    - Neu cong tac tu giam BAT va co file giong Viet: sidechaincompress
+      (nhac nen tu nho xuong khi co loi, to lai khi het loi).
+    - Con lai: tieng goc giam xuong 15% (volume=0.15) roi amix voi
+      giong Viet. KHONG co tach giong AI. Tra ve out_path, raise
+      RuntimeError neu loi (ke ca stderr cuoi cua ffmpeg de bao loi)."""
+    def _log(s):
+        if log_cb:
+            log_cb(s)
+    ffprobe = tim_ffprobe(ffmpeg)
+    tong_giay = lay_thoi_luong(ffprobe, video) if ffprobe else None
+    if tong_giay is not None:
+        _log("Thoi luong video: %.0f giay (chi de ghi log, KHONG gioi "
+             "han 15 phut cua CapCut)." % tong_giay)
+    else:
+        _log("Khong do duoc thoi luong video - van xu ly binh thuong "
+             "(khong gioi han 15 phut).")
+    co_giong = bool(audio_long) and os.path.isfile(audio_long)
+    che_do, ly_do = quyet_dinh_xu_ly_tieng_goc(tu_giam_tieng_nen, co_giong)
+    _log("Xu ly tieng goc: " + ly_do)
+    if not co_giong:
+        raise RuntimeError("Khong tim thay file giong Viet (MP3 long "
+                           "tieng) de gop cung.")
+    cmd = lenh_gop_voi_long_tieng(ffmpeg, video, audio_goc, audio_long,
+                                  out_path,
+                                  tu_giam_tieng_nen=(che_do == "sidechain"))
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True,
+                            errors="replace", bufsize=1,
+                            **chay_ngam_kwargs())
+    out_ms_re = re.compile(r"out_time_ms=(\d+)")
+    loi_tail = []
+    for line in proc.stdout:
+        loi_tail.append(line)
+        if len(loi_tail) > 20:
+            loi_tail.pop(0)
+        m2 = out_ms_re.search(line)
+        if m2 and tong_giay:
+            try:
+                pct = int(int(m2.group(1)) / (tong_giay * 1000.0) * 100)
+                tien_trinh_cb(max(0, min(100, pct)))
+            except Exception:
+                pass
+    proc.wait()
+    if proc.returncode != 0:
+        tail = "".join(loi_tail).strip()[-600:]
+        raise RuntimeError("ffmpeg bao loi khi tron long tieng (ma %d)."
+                           "%s" % (proc.returncode,
+                                   ("\n" + tail) if tail else ""))
+    if not os.path.isfile(out_path):
+        raise RuntimeError("Tron long tieng xong nhung khong thay file.")
+    tien_trinh_cb(100)
+    if che_do == "sidechain":
+        _log("Da tron xong (sidechain): nhac nen tu giam khi co loi. "
+             "File: " + out_path)
+    else:
+        _log("Da tron xong (giam tieng goc co dinh 15%%). File: "
+             + out_path)
+    return out_path
 
 
 # ======================================================================
@@ -3713,6 +3917,12 @@ class CuaSoJob(tk.Toplevel):
         self.thu_muc_phim = job.get("folder") or ""
         self.tu_gop_var = tk.BooleanVar(value=job.get("tu_gop", True))
         self.xoa_goc_var = tk.BooleanVar(value=job.get("xoa_goc", True))
+        # (v7.2) Tu giam tieng nen khi co loi: mac dinh BAT. Co file
+        # MP3 giong Viet trong thu muc du an thi tron bang FFmpeg
+        # sidechaincompress; chua co giong thi chi giam co dinh 15%.
+        # Khong gioi han thoi luong. Khong dung AI tach giong.
+        self.tu_giam_tieng_nen_var = tk.BooleanVar(
+            value=job.get("tu_giam_tieng_nen", True))
 
         ten = job.get("title") or "Video mới"
         self.title("%s - %s" % (STUDIO_TITLE, ten[:60]))
@@ -3830,11 +4040,32 @@ class CuaSoJob(tk.Toplevel):
                        command=self.luu_job_hien_tai).grid(
             row=5, column=0, columnspan=3, sticky="w", **pad)
 
+        # (v7.2) Tu giam tieng nen khi co loi (FFmpeg sidechain):
+        # co MP3 giong Viet HoaiMy trong thu muc du an thi nhac nen
+        # tu nho xuong khi co loi, to lai khi het loi; chua co giong
+        # thi chi giam co dinh tieng goc xuong 15%. Khong gioi han
+        # thoi luong, khong dung AI tach giong.
+        tk.Checkbutton(f2, text="Tự giảm tiếng nền khi có lời (FFmpeg sidechain – không giới hạn thời lượng)",
+                       variable=self.tu_giam_tieng_nen_var,
+                       command=self.luu_job_hien_tai).grid(
+            row=6, column=0, columnspan=3, sticky="w", **pad)
+        tk.Label(f2, text="Đã có MP3 giọng Việt trong thư mục dự án thì nhạc nền tự nhỏ xuống khi có lời, to lại khi hết lời. Chưa có giọng thì chỉ giảm cố định tiếng gốc xuống 15%.",
+                 fg="gray", wraplength=640, justify="left").grid(
+            row=7, column=0, columnspan=3, sticky="w", **pad)
+        self.btn_gop_long = tk.Button(
+            f2, text="GỘP VỚI LỒNG TIẾNG VIỆT (giảm tiếng gốc 15%)",
+            font=("", 11, "bold"), command=self.bam_gop_voi_long_tieng)
+        self.btn_gop_long.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
+        self.btn_tron = tk.Button(
+            f2, text="TRỘN TIẾNG NỀN + LỒNG TIẾNG (tự giảm khi có lời)",
+            font=("", 11, "bold"), command=self.bam_tron_tieng_nen)
+        self.btn_tron.grid(row=9, column=0, columnspan=3, sticky="ew", **pad)
+
         self.btn_xem = tk.Button(f2, text="XEM THÀNH QUẢ",
                                  font=("", 11, "bold"),
                                  command=self.bam_xem,
                                  state="normal" if self.thanh_qua else "disabled")
-        self.btn_xem.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
+        self.btn_xem.grid(row=10, column=0, columnspan=3, sticky="ew", **pad)
 
         # ---- Thư mục lưu ----
         tk.Label(self, text="Thư mục lưu:").grid(row=2, column=0, sticky="w", **pad)
@@ -3943,6 +4174,7 @@ class CuaSoJob(tk.Toplevel):
                 self.job["folder"] = self.thu_muc_phim
             self.job["tu_gop"] = bool(self.tu_gop_var.get())
             self.job["xoa_goc"] = bool(self.xoa_goc_var.get())
+            self.job["tu_giam_tieng_nen"] = bool(self.tu_giam_tieng_nen_var.get())
             if self.chat_luong_options:
                 self.job["chat_luong_options"] = self.chat_luong_options
             if self.link_info and self.link_info.get("duration") is not None:
@@ -4540,7 +4772,8 @@ class CuaSoJob(tk.Toplevel):
             else:
                 folder = tao_thu_muc_duy_nhat(outdir, ten_viet)
             os.makedirs(folder, exist_ok=True)
-            out_name = ten_file_dau_ra(folder, ten_viet)
+            out_name = (ten_file_da_tron(folder, ten_viet) if da_tron
+                        else ten_file_dau_ra(folder, ten_viet))
             out_path = os.path.join(folder, out_name)
             gop_co_tien_trinh(
                 video, audio, out_path, ffmpeg,
@@ -4593,6 +4826,125 @@ class CuaSoJob(tk.Toplevel):
                                % (ten_viet, out_path) +
                                "\n\nMở thư mục chứa video?"):
             os.startfile(folder)
+
+    # ---------- v7.1: gop voi long tieng Viet ----------
+    def bam_gop_voi_long_tieng(self):
+        """(v7.2) Chon file long tieng Viet (.mp3, tu tab Doc phu de)
+        roi gop: hinh + tieng goc + giong Viet. Neu cong tac tu giam
+        dang BAT thi tron sidechain (nhac nen tu nho khi co loi);
+        neu TAT thi chi giam co dinh 15%. Khong gioi han 15 phut.
+        Chay luong ngam, file ra cung thu muc du an."""
+        video = self.video_var.get().strip()
+        audio = self.audio_var.get().strip()
+        outdir = self.outdir_var.get().strip()
+        if not video or not os.path.isfile(video):
+            messagebox.showerror("Thiếu file", "Chưa chọn file Video (hình).")
+            return
+        if not audio or not os.path.isfile(audio):
+            messagebox.showerror("Thiếu file", "Chưa chọn file Audio (tiếng).")
+            return
+        dub = filedialog.askopenfilename(
+            title="Chọn file lồng tiếng Việt (.mp3)",
+            filetypes=[("Audio MP3", "*.mp3"),
+                       ("Audio", "*.mp3 *.wav *.m4a"),
+                       ("Tất cả file", "*.*")])
+        if not dub:
+            return
+        ffmpeg = self.ffmpeg or tim_ffmpeg()
+        if not ffmpeg:
+            messagebox.showerror("Thiếu ffmpeg",
+                                 "Chưa tìm thấy ffmpeg (cần để gộp).")
+            return
+        self.ffmpeg = ffmpeg
+        self.luu_cau_hinh()
+        self.btn_gop_long.config(state="disabled")
+        self.dang_gop = True
+        self.tien_trinh_gop["value"] = 0
+        self.phan_tram_gop_var.set("0%")
+        self.ghi_log("Đang gộp với lồng tiếng Việt, chờ một chút...")
+        self.luu_job_hien_tai(status="dang_gop")
+        threading.Thread(target=self._gop_long_tieng_worker,
+                         args=(video, audio, dub, outdir, ffmpeg),
+                         daemon=True).start()
+
+    def _gop_long_tieng_worker(self, video, audio, dub, outdir, ffmpeg,
+                             da_tron=False):
+        try:
+            ten_viet = ten_phim_tu_ten_file(video)
+            thu_muc_video = os.path.dirname(os.path.abspath(video))
+            if thu_muc_video != os.path.abspath(outdir):
+                folder = thu_muc_video
+            else:
+                folder = tao_thu_muc_duy_nhat(outdir, ten_viet)
+            os.makedirs(folder, exist_ok=True)
+            out_name = ten_file_dau_ra(folder, ten_viet)
+            out_path = os.path.join(folder, out_name)
+            gop_voi_long_tieng(
+                video, audio, dub, out_path, ffmpeg,
+                lambda pct: self.after_an_toan(
+                    0, self._cap_nhat_tien_trinh_gop, pct),
+                tu_giam_tieng_nen=bool(self.tu_giam_tieng_nen_var.get()),
+                log_cb=self.log_threadsafe)
+            self.after_an_toan(0, self._gop_xong, out_path, folder,
+                               video, audio, ten_viet)
+        except Exception as e:
+            self.after_an_toan(0, self._gop_loi, str(e))
+        finally:
+            self.dang_gop = False
+            self.after_an_toan(
+                0, lambda: self.btn_gop_long.config(state="normal"))
+            self.after_an_toan(
+                0, lambda: self.btn_tron.config(state="normal"))
+
+    def bam_tron_tieng_nen(self):
+        """(v7.2) Nut TRON TIENG NEN + LONG TIENG: tu tim file MP3
+        giong Viet HoaiMy trong CUNG thu muc du an (cung thu muc voi
+        file video); tim thay thi dung luon, khong thay thi mo hop
+        chon file. Tron bang sidechain neu cong tac tu giam dang BAT,
+        khong thi giam co dinh 15%. File ra <ten_viet>_da-tron.mp4
+        cung thu muc du an, chay luong ngam, bao ro tron xong / loi."""
+        video = self.video_var.get().strip()
+        audio = self.audio_var.get().strip()
+        outdir = self.outdir_var.get().strip()
+        if not video or not os.path.isfile(video):
+            messagebox.showerror("Thiếu file", "Chưa chọn file Video (hình).")
+            return
+        if not audio or not os.path.isfile(audio):
+            messagebox.showerror("Thiếu file", "Chưa chọn file Audio (tiếng).")
+            return
+        thu_muc_video = os.path.dirname(os.path.abspath(video))
+        ten_viet = ten_phim_tu_ten_file(video)
+        dub = tim_file_long_tieng(thu_muc_video, ten_viet)
+        if dub:
+            self.ghi_log("Tìm thấy file giọng Việt trong thư mục dự án: "
+                         + dub)
+        else:
+            self.ghi_log("Chưa thấy file giọng Việt trong thư mục dự án "
+                         "- mở hộp chọn file.")
+            dub = filedialog.askopenfilename(
+                title="Chọn file lồng tiếng Việt (.mp3)",
+                filetypes=[("Audio MP3", "*.mp3"),
+                           ("Audio", "*.mp3 *.wav *.m4a"),
+                           ("Tất cả file", "*.*")])
+            if not dub:
+                return
+        ffmpeg = self.ffmpeg or tim_ffmpeg()
+        if not ffmpeg:
+            messagebox.showerror("Thiếu ffmpeg",
+                                 "Chưa tìm thấy ffmpeg (cần để trộn).")
+            return
+        self.ffmpeg = ffmpeg
+        self.luu_cau_hinh()
+        self.btn_gop_long.config(state="disabled")
+        self.btn_tron.config(state="disabled")
+        self.dang_gop = True
+        self.tien_trinh_gop["value"] = 0
+        self.phan_tram_gop_var.set("0%")
+        self.ghi_log("Đang trộn tiếng nền + lồng tiếng Việt, chờ một chút...")
+        self.luu_job_hien_tai(status="dang_gop")
+        threading.Thread(target=self._gop_long_tieng_worker,
+                         args=(video, audio, dub, outdir, ffmpeg, True),
+                         daemon=True).start()
 
     def _gop_loi(self, msg):
         self.ghi_log("GỘP THẤT BẠI: " + msg)

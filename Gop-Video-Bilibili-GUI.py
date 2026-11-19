@@ -128,6 +128,36 @@ file goc; luu de ban dich thi sao luu 1 ban .bak truoc, chi tao 1 lan
 thu cong": mo SRT goc, tu go tieng Viet tung cau (o nhap canh tung
 cau, co nut Luu nhap / tu luu nhap), luu thang ra SRT Viet, khong goi
 AI, van giu moc gio goc; luu xong mo tab Doc phu de HoaiMy.
+v7.6 (BANG TREEVIEW + DICH TOAN BO + MUSE CHAT TAY - CYAN 19/11):
+bang lich su du an doi sang ttk.Treeview cot co dinh (ten/link/
+trang thai/thu muc/phu de rut gon co "...", gia tri day du hien o
+label chi tiet duoi bang khi chon dong) + hang nut hanh dong cho
+dong dang chon, them nut "Mo thu muc phu de" (Explorer chon dung
+file .srt). Dich phu de doi sang MAC DINH dich TOAN BO file trong
+1 prompt duy nhat (dung prompt cu, dich theo boi canh toan bo);
+thieu cau/sai so cau/lech timestamp thi BAO LOI, KHONG luu de
+file goc; loi thi tu chuyen sang chia cum 20 cau (du phong, co
+cong tac chon "cum"), log/UI ghi ro che do da dung. Them "Muse"
+(tro ly Muse, chat tay, KHONG API/key/endpoint) ben canh Gemini/
+GPT/Claude (Claude = Anthropic, truoc day goi nham la "Muse" —
+config cu tu dong doi sang "Claude" 1 lan); Muse dung "Xuat
+prompt + SRT toan bo" roi "Nhap ban dich ve" (kiem tra so cau/
+timestamp khop goc moi cho luu de, co .bak 1 lan). Them o chon/
+go model tung nha cung cap (luu local): Gemini mac dinh
+gemini-3.8-flash, du phong gemini-3.5-flash-lite (KHONG dung
+gemini-2.5-flash, tat 01/12/2026), GPT mac dinh gpt-4o-mini,
+Claude mac dinh claude-sonnet-4-5. Cookie: KHONG them login
+trong tool — login trong trinh duyet roi export cookies.txt
+bang Get cookies.txt LOCALLY, import vao tool; cookie Bilibili
+chi dung cho Bilibili, cookie web AI la rieng tung web.
+Sua loi CYAN bao 19/11: (A) nut "Tai phu de" trong cua so job
+gio tao thu muc phim truoc khi tai (khong de .srt roi thang vao
+thu muc goc); bang Treeview hien "(chua co thu muc)" khi job
+chua co folder, khong fallback ve outdir. (B) file tieng day
+sang IDM doi ten _tieng.m4a -> _tieng.mp4 (stream tieng thuc
+chat la container mp4, server tra MIME video/mp4 nen IDM het
+hoi doi ten); nhan dien cap van phan biet bang ffprobe (file
+nao co luong video) nen 2 file .mp4 khong lan nhau.
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -173,7 +203,15 @@ from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 # Cap nhat. Chi co 1 luong cap nhat duy nhat (cua ChipChip).
 APP_TITLE = "Chipchipdownload"
 STUDIO_TITLE = "ChipChipStudio"
-VERSION = "7.5"
+VERSION = "7.6"
+# (v7.6) Model dich phu de — KHONG hardcode trong ham goi API nua,
+# lay tu config (nguoi dung chon/go o tab Xu ly phu de).
+# Gemini 2.5-flash DA DEPRECATED, tat 01/12/2026: TUYET DOI khong
+# dung nua. Mac dinh Gemini = 3.8-flash, du phong = 3.5-flash-lite.
+MODEL_GEMINI_MAC_DINH = "gemini-3.8-flash"
+MODEL_GEMINI_DU_PHONG = "gemini-3.5-flash-lite"
+MODEL_GPT_MAC_DINH = "gpt-4o-mini"
+MODEL_CLAUDE_MAC_DINH = "claude-sonnet-4-5"
 GITHUB_REPO = "Cyandeptrai/gop-video-bilibili"
 GITHUB_API_LATEST_RELEASE = ("https://api.github.com/repos/"
                              + GITHUB_REPO + "/releases/latest")
@@ -187,9 +225,12 @@ YTDLP_DOWNLOAD_URL = ("https://github.com/yt-dlp/yt-dlp/releases/"
                       "latest/download/yt-dlp.exe")
 FFMPEG_DOWNLOAD_URL = ("https://www.gyan.dev/ffmpeg/builds/"
                        "ffmpeg-release-essentials.zip")
-# .m4s: file tiếng IDM tải về thực tế có đuôi .m4s (không phải .m4a như đặt
-# tên lúc đẩy sang IDM) - v5 chỉ nhận .m4a nên tracker không đếm được file
-# tiếng, chỉ hiện 77%. v6 nhận cả .m4s.
+# (v7.6) File tieng day sang IDM dat ten _tieng.mp4 (khong con
+# _tieng.m4a): stream tieng cua Bilibili thuc chat la container
+# mp4, server tra MIME video/mp4 nen IDM hoi doi ten .m4a -> .mp4.
+# Dat thang .mp4 thi IDM het hoi, khong lan voi file hinh vi
+# nhan_dien_cap phan biet bang ffprobe (file nao co luong video).
+# .m4s van giu trong MEDIA_EXTS cho file cu da tai truoc day.
 MEDIA_EXTS = (".mp4", ".m4a", ".m4s", ".webm", ".mkv")
 COOKIES_MAC_DINH = r"C:\Users\Administrator\Desktop\Cookiebili\cookies.txt"
 UA_TRINH_DUYET = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -268,14 +309,30 @@ def doc_config():
         "toc_do_toi_da": 1.35, "tu_dong_toc_do": True, "che_do": "gop",
         "phu_de_provider": "Gemini", "gemini_api_key": "",
         "openai_api_key": "", "anthropic_api_key": "",
+        # (v7.6) Che do dich + model tung nha cung cap (luu local).
+        # che_do: "toan_bo" (mac dinh, 1 prompt duy nhat) / "cum"
+        # (chi chia cum 20 cau). Model de trong thi dung mac dinh
+        # o tren; nguoi dung duoc go model khac o tab Xu ly phu de.
+        "phu_de_che_do": "toan_bo",
+        "phu_de_model_gemini": MODEL_GEMINI_MAC_DINH,
+        "phu_de_model_gemini_du_phong": MODEL_GEMINI_DU_PHONG,
+        "phu_de_model_gpt": MODEL_GPT_MAC_DINH,
+        "phu_de_model_claude": MODEL_CLAUDE_MAC_DINH,
         "phu_de_the_loai": "", "phu_de_nhan_vat": "",
-        "phu_de_xung_ho": "",
+        "phu_de_xung_ho": "", "phu_de_boi_canh": "",
     }
     try:
         with open(config_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
             if not isinstance(data, dict):
                 data = {}
+        # (v7.6) MIGRATION 1 LAN: cau hinh cu (truoc v7.6) dung
+        # "Muse" de chi Claude (Anthropic); tu v7.6 "Muse" la tro ly
+        # Muse (chat tay, khong API), Claude co ten rieng. Chi doi
+        # khi file config chua co khoa "phu_de_che_do" (tuc la file
+        # cu) — file da luu o v7.6 tro di thi "Muse" giu nguyen la Muse.
+        if "phu_de_che_do" not in data and data.get("phu_de_provider") == "Muse":
+            data["phu_de_provider"] = "Claude"
         for k, v in mac_dinh.items():
             data.setdefault(k, v)
         return data
@@ -714,7 +771,10 @@ def quet_dung_luong_thu_muc(folder):
 def nhan_dien_cap(folder, ffmpeg):
     """Nhận diện cặp (video, audio) trong thư mục. Cần đúng 2 file media.
     Ưu tiên dùng ffprobe xem file nào thật sự có hình, không đọc được thì
-    đoán theo cỡ file (file to = hình, file nhỏ = tiếng)."""
+    đoán theo cỡ file (file to = hình, file nhỏ = tiếng).
+    (v7.6) Cả 2 file có thể cùng đuôi .mp4 (file tiếng IDM giờ là
+    _tieng.mp4): phân biệt bằng luồng video của ffprobe, KHÔNG dựa
+    vào đuôi file, nên không lẫn hình/tiếng."""
     files = []
     for name in os.listdir(folder):
         low = name.lower()
@@ -841,6 +901,60 @@ def mo_thu_muc(duong_dan):
         return True
     except Exception:
         return False
+
+
+def mo_file_trong_explorer(duong_dan):
+    """(v7.6) Mo thu muc chua file va CHON DUNG file do trong
+    Explorer (Windows: explorer /select,). Dung cho nut "Mo thu
+    muc phu de": file .srt co the nam ngoai thu muc du an (import
+    tay) nen mo thu muc du an khong thay no. That bai thi tra
+    False de ham goi mo thu muc cha bang mo_thu_muc()."""
+    if not duong_dan or not os.path.isfile(duong_dan):
+        return False
+    try:
+        if sys.platform.startswith("win"):
+            subprocess.Popen(["explorer", "/select,",
+                              os.path.normpath(duong_dan)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", duong_dan])
+        else:
+            subprocess.Popen(["xdg-open", os.path.dirname(duong_dan)])
+        return True
+    except Exception:
+        return False
+
+
+def rut_gon_chu(text, gioi_han=40):
+    """(v7.6) Rut gon chu de hien trong bang co dinh: qua gioi han
+    thi cat o cuoi + "…". Gia tri day du KHONG mat: luu o job va
+    hien o label chi tiet duoi bang khi chon dong."""
+    text = (text or "").strip()
+    if len(text) <= gioi_han:
+        return text
+    return text[:max(gioi_han - 1, 1)].rstrip() + "…"
+
+
+def rut_gon_link(link):
+    """(v7.6) Link Bilibili dai vi ?spm_id_from=...&vd_source=...:
+    chi hien dang bilibili.com/video/BVxxxx. Khong co BV thi rut
+    gon nhu chu thuong."""
+    link = (link or "").strip()
+    m = re.search(r"BV[0-9A-Za-z]+", link)
+    if m:
+        return "bilibili.com/video/" + m.group(0)
+    return rut_gon_chu(link, 32)
+
+
+def rut_gon_duong_dan(duong_dan):
+    """(v7.6) Duong dan thu muc chi hien ...\\ten-thu-muc-cuoi."""
+    duong_dan = (duong_dan or "").strip()
+    if len(duong_dan) <= 28:
+        return duong_dan
+    phan = [p for p in re.split(r"[\\/]+", duong_dan) if p]
+    cuoi = phan[-1] if phan else duong_dan
+    if len(cuoi) > 25:
+        cuoi = cuoi[-25:]
+    return "…\\" + cuoi
 
 
 def cap_nhat_job_trong_jobs(job):
@@ -1548,30 +1662,45 @@ def tai_phu_de(url, folder, ten_viet, cookies, log=None, langs_da_dung=None):
 
 
 def dich_srt_1_mach(cac_cau, log=None, dich_fn=None):
-    """(v7.5) Dich 1 cum SRT bang dung logic cua tab Xu ly phu de
-    (dich_srt_theo_cum, cum 20 cau, giu timestamp, key luu local,
-    khong hardcode). dich_fn(cac_cau) -> list neu truyen (dung cho
-    test). Raise RuntimeError neu thieu key — KHONG goi API khi
-    khong co key. KHONG ghi gi len file goc o day (chi tra ve list
-    cau dich); viec luu do chay_luong_1_mach / nut Luu lam SAU KHI
-    dich xong, nen dich loi thi file goc con nguyen."""
+    """(v7.6) Dich bang dung logic cua tab Xu ly phu de (dich_srt):
+    MAC DINH dich TOAN BO file trong 1 prompt duy nhat; neu toan
+    bo loi thi tu chuyen sang chia cum 20 cau (du phong). dich_fn
+    (cac_cau) -> list neu truyen (dung cho test). Raise RuntimeError
+    neu thieu key — KHONG goi API khi khong co key. Muse (chat tay)
+    thi raise loi huong dan dung che do chat tay, khong goi API.
+    KHONG ghi gi len file goc o day (chi tra ve list cau dich);
+    viec luu do chay_luong_1_mach / nut Luu lam SAU KHI dich xong
+    va kiem tra khop, nen dich loi thi file goc con nguyen."""
     if dich_fn is not None:
         return dich_fn(cac_cau)
     cfg = doc_config()
-    provider = cfg.get("phu_de_provider") or "Gemini"
+    provider = chuan_hoa_provider(cfg.get("phu_de_provider") or "Gemini")
+    if provider == "Muse":
+        raise RuntimeError(
+            "Nhà cung cấp đang chọn là Muse (trợ lý chat tay, không "
+            "có API) — luồng 1 mạch không tự dịch được. Dùng chế độ "
+            "chat tay: 'Xuất prompt + SRT toàn bộ' ở tab Xử lý phụ "
+            "đề, dán vào chat với Muse, rồi 'Nhập bản dịch về' "
+            "(file SRT gốc vẫn còn nguyên).")
     khoa = {"Gemini": "gemini_api_key", "GPT": "openai_api_key",
-            "Muse": "anthropic_api_key"}.get(provider, "gemini_api_key")
+            "Claude": "anthropic_api_key"}.get(provider, "gemini_api_key")
     key = (cfg.get(khoa) or "").strip()
     if not key:
         raise RuntimeError(
             "Chưa có key %s — lưu key trong tab Xử lý phụ đề rồi "
             "chạy lại (file SRT gốc vẫn còn nguyên)." % provider)
-    return dich_srt_theo_cum(
+    ket_qua, che_do = dich_srt(
         cac_cau, provider, key,
         cfg.get("phu_de_the_loai") or "",
         cfg.get("phu_de_nhan_vat") or "",
         cfg.get("phu_de_xung_ho") or "",
-        cfg.get("phu_de_boi_canh") or "")
+        cfg.get("phu_de_boi_canh") or "",
+        model=model_cua_provider(provider, cfg),
+        che_do=cfg.get("phu_de_che_do") or "toan_bo",
+        log=log)
+    if log:
+        log("Đã dịch xong bằng chế độ: %s." % che_do)
+    return ket_qua
 
 
 def chay_luong_1_mach(url, folder, ten_viet, cookies, langs_da_dung,
@@ -1616,7 +1745,8 @@ def chay_luong_1_mach(url, folder, ten_viet, cookies, langs_da_dung,
         return {"thanh_cong": True, "buoc_dung": "lay_phu_de",
                 "loi": "", "srt_goc": srt, "srt_viet": None,
                 "da_dich": False, "so_cau": 0}
-    _log("Bước 2: Dịch sang tiếng Việt (Gemini, giữ nguyên mốc giờ)...")
+    _log("Bước 2: Dịch sang tiếng Việt (giữ nguyên mốc giờ, chế độ "
+         "toàn bộ 1 prompt, lỗi thì tự chuyển cụm 20 câu)...")
     try:
         cac_goc = doc_srt(srt)
         if not cac_goc:
@@ -1637,12 +1767,17 @@ def chay_luong_1_mach(url, folder, ten_viet, cookies, langs_da_dung,
                        "còn nguyên, không mất.",
                 "srt_goc": srt, "srt_viet": None, "da_dich": False,
                 "so_cau": 0}
-    if (len(cac_dich) != len(cac_goc)
-            or any(d.get("bat_dau_ms") != g.get("bat_dau_ms")
-                   or d.get("ket_thuc_ms") != g.get("ket_thuc_ms")
-                   for d, g in zip(cac_dich, cac_goc))):
-        _log("CẢNH BÁO: bản dịch lệch mốc giờ so với gốc — vẫn lưu "
-             "nhưng cậu kiểm tra lại trong tab Xử lý phụ đề.")
+    # (v7.6) Kiem tra CUNG truoc khi luu: thieu/lech thi DUNG,
+    # KHONG luu de (truoc day chi canh bao roi van luu).
+    ok_khop, loi_khop = kiem_tra_ban_dich_khop_goc(cac_goc, cac_dich)
+    if not ok_khop:
+        _log("Bản dịch KHÔNG KHỚP file gốc (%s) — KHÔNG lưu, file "
+             "gốc còn nguyên." % loi_khop)
+        return {"thanh_cong": False, "buoc_dung": "dich",
+                "loi": "Bản dịch không khớp file gốc: %s — file SRT "
+                       "gốc còn nguyên, không mất." % loi_khop,
+                "srt_goc": srt, "srt_viet": None, "da_dich": False,
+                "so_cau": 0}
     _log("Bước 3: Lưu đè bản dịch lên file gốc (sao lưu .bak 1 lần)...")
     try:
         duong, bak = luu_ban_dich_an_toan(srt, cac_dich, _log)
@@ -1698,64 +1833,237 @@ def tao_prompt_dich_phu_de(the_loai, nhan_vat, xung_ho, boi_canh, khoi_srt):
                   khoi_srt))
 
 
-def goi_api_dich(provider, api_key, prompt):
-    """Goi API dich (Gemini mac dinh / GPT / Muse). Key lay tu config,
-    KHONG hardcode, KHONG ghi log key. Tra ve text tra loi.
-    Muse = Anthropic Messages API. Can key that thi bao loi ro."""
+def chuan_hoa_provider(provider):
+    """Ten nha cung cap hop le: Gemini / GPT / Claude / Muse.
+    "Muse" o day la tro ly Muse (chat tay, KHONG co API), KHONG
+    phai Claude/Anthropic. Trong thi mac dinh Gemini."""
+    p = (provider or "").strip()
+    if p in ("Gemini", "GPT", "Claude", "Muse"):
+        return p
+    return "Gemini" if not p else p
+
+
+def model_cua_provider(provider, cfg=None):
+    """Model da chon cho provider (tu config, nguoi dung chon/go
+    o tab Xu ly phu de); trong thi dung mac dinh. Muse (chat tay)
+    khong dung model API -> tra ''."""
+    cfg = cfg or {}
+    khoa = {"Gemini": "phu_de_model_gemini",
+            "GPT": "phu_de_model_gpt",
+            "Claude": "phu_de_model_claude"}.get(provider)
+    if khoa is None:
+        return ""
+    mac_dinh = {"Gemini": MODEL_GEMINI_MAC_DINH,
+                "GPT": MODEL_GPT_MAC_DINH,
+                "Claude": MODEL_CLAUDE_MAC_DINH}.get(provider, "")
+    return (cfg.get(khoa) or "").strip() or mac_dinh
+
+
+def kiem_tra_ban_dich_khop_goc(cac_goc, cac_dich):
+    """(v7.6) Kiem tra cung truoc khi cho luu de file goc: ban
+    dich phai DU so cau, timestamp tung cau KHOP goc, cau nao
+    cung co loi thoai. Tra (True, '') neu khop; (False, 'loi...')
+    neu khong — ham goi KHONG DUOC luu de khi False, file goc
+    con nguyen."""
+    goc = cac_goc or []
+    dich = cac_dich or []
+    if len(dich) != len(goc):
+        return (False, "sai số câu (gốc %d câu, bản dịch %d câu)"
+                % (len(goc), len(dich)))
+    for g, d in zip(goc, dich):
+        if (d.get("bat_dau_ms") != g.get("bat_dau_ms")
+                or d.get("ket_thuc_ms") != g.get("ket_thuc_ms")):
+            return (False, "lệch timestamp ở câu #%s (gốc %s --> %s, "
+                    "dịch %s --> %s)"
+                    % (g.get("chi_so"),
+                       dinh_dang_ms_srt(g.get("bat_dau_ms") or 0),
+                       dinh_dang_ms_srt(g.get("ket_thuc_ms") or 0),
+                       dinh_dang_ms_srt(d.get("bat_dau_ms") or 0),
+                       dinh_dang_ms_srt(d.get("ket_thuc_ms") or 0)))
+        if not (d.get("text") or "").strip():
+            return (False, "câu #%s chưa có lời thoại trong bản dịch"
+                    % (g.get("chi_so"),))
+    return (True, "")
+
+
+def _goi_gemini_once(model, key, prompt, timeout):
+    """1 lan goi Gemini generateContent voi model da cho. Tra text
+    tra loi; raise RuntimeError neu loi mang / tra ve khong doc duoc."""
+    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+           + urllib.parse.quote(model) + ":generateContent?key="
+           + urllib.parse.quote(key))
+    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
+    req = urllib.request.Request(url, data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        d = json.loads(resp.read().decode("utf-8", "replace"))
+    try:
+        return d["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        raise RuntimeError("Gemini trả về không đọc được: %s" % str(d)[:300])
+
+
+def goi_api_dich(provider, api_key, prompt, model=None, toan_bo=False,
+                 log=None):
+    """Goi API dich (Gemini / GPT / Claude). Model lay tu tham so
+    (da chon o tab Xu ly phu de, luu local), KHONG hardcode.
+    Gemini mac dinh gemini-3.8-flash; loi thi thu 1 lan voi model
+    du phong gemini-3.5-flash-lite. KHONG dung gemini-2.5-flash
+    (deprecated, tat 01/12/2026). Muse = tro ly Muse (chat tay):
+    KHONG co API key/endpoint trong tool — raise loi huong dan
+    dung che do chat tay thay vi goi API la. Key KHONG ghi log."""
+    provider = chuan_hoa_provider(provider)
+    if provider == "Muse":
+        raise RuntimeError(
+            "Muse là trợ lý chat tay, không có API key/endpoint "
+            "trong tool — dùng chế độ chat tay: bấm 'Xuất prompt + "
+            "SRT toàn bộ', dán vào chat với Muse, rồi 'Nhập bản "
+            "dịch về'. Không gọi API nào cho Muse.")
     if not (api_key or "").strip():
         raise RuntimeError("Chưa nhập API key cho %s (nhập ở tab Xử lý "
                            "phụ đề, key chỉ lưu local trong config.json)."
                            % provider)
     key = api_key.strip()
-    data = json.dumps({"x": 1}).encode()  # placeholder, ghi de ben duoi
+    timeout = 600 if toan_bo else 180
     if provider == "Gemini":
-        url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-               "gemini-2.5-flash:generateContent?key=" +
-               urllib.parse.quote(key))
-        body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
-        req = urllib.request.Request(url, data=body,
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            d = json.loads(resp.read().decode("utf-8", "replace"))
+        model_chon = (model or "").strip() or MODEL_GEMINI_MAC_DINH
         try:
-            return d["candidates"][0]["content"]["parts"][0]["text"]
-        except Exception:
-            raise RuntimeError("Gemini trả về không đọc được: %s" % str(d)[:300])
+            return _goi_gemini_once(model_chon, key, prompt, timeout)
+        except Exception as e:
+            if model_chon == MODEL_GEMINI_DU_PHONG:
+                raise
+            if log:
+                log("Gemini %s lỗi (%s) — thử lại với model dự phòng %s."
+                    % (model_chon, e, MODEL_GEMINI_DU_PHONG))
+            return _goi_gemini_once(MODEL_GEMINI_DU_PHONG, key, prompt,
+                                    timeout)
     if provider == "GPT":
+        model_chon = (model or "").strip() or MODEL_GPT_MAC_DINH
         url = "https://api.openai.com/v1/chat/completions"
-        body = json.dumps({"model": "gpt-4o-mini", "messages": [
+        body = json.dumps({"model": model_chon, "messages": [
             {"role": "user", "content": prompt}]}).encode("utf-8")
         req = urllib.request.Request(url, data=body, headers={
             "Content-Type": "application/json",
             "Authorization": "Bearer " + key})
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             d = json.loads(resp.read().decode("utf-8", "replace"))
         try:
             return d["choices"][0]["message"]["content"]
         except Exception:
             raise RuntimeError("GPT trả về không đọc được: %s" % str(d)[:300])
-    # Muse (Anthropic)
-    url = "https://api.anthropic.com/v1/messages"
-    body = json.dumps({"model": "claude-sonnet-4-5",
-                       "max_tokens": 8000,
-                       "messages": [{"role": "user", "content": prompt}]}).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers={
-        "Content-Type": "application/json",
-        "x-api-key": key, "anthropic-version": "2023-06-01"})
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        d = json.loads(resp.read().decode("utf-8", "replace"))
+    if provider == "Claude":
+        # Claude = Anthropic Messages API (truoc v7.6 goi nham la "Muse").
+        model_chon = (model or "").strip() or MODEL_CLAUDE_MAC_DINH
+        url = "https://api.anthropic.com/v1/messages"
+        body = json.dumps({"model": model_chon,
+                           "max_tokens": 64000 if toan_bo else 8000,
+                           "messages": [{"role": "user", "content": prompt}]}).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers={
+            "Content-Type": "application/json",
+            "x-api-key": key, "anthropic-version": "2023-06-01"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            d = json.loads(resp.read().decode("utf-8", "replace"))
+        try:
+            return "".join(p.get("text", "") for p in d.get("content", []))
+        except Exception:
+            raise RuntimeError("Claude trả về không đọc được: %s" % str(d)[:300])
+    raise RuntimeError("Nhà cung cấp không rõ: %s" % provider)
+
+
+def dich_srt_toan_bo(cac_cau, provider, api_key, the_loai, nhan_vat,
+                     xung_ho, boi_canh, model=None, log=None):
+    """(v7.6) Dich TOAN BO file SRT goc trong 1 prompt duy nhat
+    (dung dung prompt tao_prompt_dich_phu_de: dich theo boi canh
+    toan bo, dung tinh cach/cam xuc/tinh huong tung cau, tu nhien
+    nhu nguoi Viet noi, khong word-by-word, tra DUNG dinh dang
+    SRT goc, giu nguyen so thu tu + timestamp, chi thay loi thoai,
+    khong them/bot cau, khong giai thich). File dai vai nghin cau
+    gui 1 lan de bi cat/timeout/lech — nen kiem tra cung: thieu
+    cau, sai so cau hoac lech timestamp thi raise RuntimeError,
+    KHONG tra ve ban dich lech, ham goi KHONG luu gi, file goc
+    con nguyen. Tra list cau dich (timestamp lay tu goc)."""
+    if not cac_cau:
+        raise RuntimeError("Không có câu nào để dịch.")
+    khoi = []
+    for c in cac_cau:
+        khoi.append("%d\n%s --> %s\n%s" % (
+            c.get("chi_so") or 0,
+            dinh_dang_ms_srt(c.get("bat_dau_ms") or 0),
+            dinh_dang_ms_srt(c.get("ket_thuc_ms") or 0),
+            c.get("text") or ""))
+    prompt = tao_prompt_dich_phu_de(the_loai, nhan_vat, xung_ho,
+                                    boi_canh, "\n\n".join(khoi))
+    if log:
+        log("Chế độ dịch: toàn bộ 1 prompt (%d câu, %s)."
+            % (len(cac_cau), provider))
+    tra_loi = goi_api_dich(provider, api_key, prompt, model=model,
+                           toan_bo=True, log=log)
+    da_parse = doc_srt_text(tra_loi)
+    ok, loi = kiem_tra_ban_dich_khop_goc(cac_cau, da_parse)
+    if not ok:
+        raise RuntimeError(
+            "Bản dịch toàn bộ KHÔNG KHỚP file gốc: %s — không lưu "
+            "gì, file gốc còn nguyên. Thử lại, hoặc để tool tự "
+            "chuyển sang chia cụm 20 câu." % loi)
+    return [{"chi_so": g.get("chi_so"),
+             "bat_dau_ms": g.get("bat_dau_ms"),
+             "ket_thuc_ms": g.get("ket_thuc_ms"),
+             "text": m.get("text") or g.get("text")}
+            for g, m in zip(cac_cau, da_parse)]
+
+
+def dich_srt(cac_cau, provider, api_key, the_loai, nhan_vat, xung_ho,
+             boi_canh, model=None, che_do="toan_bo", tien_trinh_cb=None,
+             dung_event=None, log=None):
+    """(v7.6) Dieu phoi dich: mac dinh TOAN BO 1 prompt; neu toan
+    bo loi (cat/timeout/lech) thi TU CHUYEN sang chia cum 20 cau
+    (du phong, dich_srt_theo_cum) va ghi ro che do da dung vao
+    log. che_do="cum" thi chi dich theo cum ngay tu dau. Tra
+    (ket_qua, che_do_da_dung). Muse (chat tay) thi raise loi
+    huong dan, khong goi API."""
+    provider = chuan_hoa_provider(provider)
+    if provider == "Muse":
+        raise RuntimeError(
+            "Muse là trợ lý chat tay, không có API — dùng chế độ "
+            "chat tay: 'Xuất prompt + SRT toàn bộ' rồi 'Nhập bản "
+            "dịch về'.")
+    if (che_do or "toan_bo") == "cum":
+        if log:
+            log("Chế độ dịch: chỉ chia cụm 20 câu (theo lựa chọn).")
+        ket = dich_srt_theo_cum(
+            cac_cau, provider, api_key, the_loai, nhan_vat, xung_ho,
+            boi_canh, tien_trinh_cb=tien_trinh_cb, dung_event=dung_event,
+            model=model, log=log)
+        return (ket, "cum")
     try:
-        return "".join(p.get("text", "") for p in d.get("content", []))
-    except Exception:
-        raise RuntimeError("Muse trả về không đọc được: %s" % str(d)[:300])
+        ket = dich_srt_toan_bo(
+            cac_cau, provider, api_key, the_loai, nhan_vat, xung_ho,
+            boi_canh, model=model, log=log)
+        if tien_trinh_cb:
+            tien_trinh_cb(100)
+        return (ket, "toan_bo")
+    except Exception as e:
+        if dung_event is not None and dung_event.is_set():
+            raise
+        if log:
+            log("Dịch toàn bộ lỗi (%s) — tự chuyển sang chia cụm "
+                "20 câu (dự phòng)." % e)
+        ket = dich_srt_theo_cum(
+            cac_cau, provider, api_key, the_loai, nhan_vat, xung_ho,
+            boi_canh, tien_trinh_cb=tien_trinh_cb, dung_event=dung_event,
+            model=model, log=log)
+        return (ket, "cum (dự phòng sau khi toàn bộ lỗi)")
 
 
 def dich_srt_theo_cum(cac_cau, provider, api_key, the_loai, nhan_vat,
                       xung_ho, boi_canh, tien_trinh_cb=None,
-                      dung_event=None):
+                      dung_event=None, model=None, log=None):
     """Dich SRT theo cum 20 cau, giu timestamp goc. Tra ve list cau da
     dich (cung chi_so/bat_dau/ket_thuc, text tieng Viet). Neu API tra
-    ve khong parse duoc thanh SRT thi map theo thu tu cau."""
+    ve khong parse duoc thanh SRT thi map theo thu tu cau.
+    (v7.6) Day la che do DU PHONG cua dich toan bo: chi dung khi
+    nguoi dung chon "cum", hoac khi dich toan bo loi va tool tu
+    chuyen sang. Timestamp lay tu goc nen luon khop goc."""
     ket_qua = []
     cum = 20
     for bat_dau in range(0, len(cac_cau), cum):
@@ -1771,7 +2079,8 @@ def dich_srt_theo_cum(cac_cau, provider, api_key, the_loai, nhan_vat,
                 c.get("text") or ""))
         prompt = tao_prompt_dich_phu_de(the_loai, nhan_vat, xung_ho,
                                         boi_canh, "\n\n".join(khoi))
-        tra_loi = goi_api_dich(provider, api_key, prompt)
+        tra_loi = goi_api_dich(provider, api_key, prompt, model=model,
+                               log=log)
         da_parse = doc_srt_text(tra_loi)
         if len(da_parse) == len(nhom):
             for goc, moi in zip(nhom, da_parse):
@@ -2092,7 +2401,10 @@ def tai_bang_idm(url, option, cookies, outdir, log, dich_ten=True):
     tổng dung lượng ước tính để theo dõi %).
     IDM tải xong thì dùng mục Gộp để gộp lại.
     (v7.3) dich_ten=False: ten thu muc / ten file giu nguyen ten goc,
-    khong dich."""
+    khong dich. (v7.6) File tieng dat ten _tieng.mp4 (khong con
+    _tieng.m4a): stream tieng thuc chat la container mp4, server
+    tra MIME video/mp4 nen IDM het hoi doi ten; nhan dien cap
+    phan biet bang ffprobe nen 2 file .mp4 khong lan nhau."""
     url = chuan_hoa_link_bilibili(url)
     info = kiem_tra_link(url, cookies)
     # (v6.5) Thư mục trùng tên phim đã dịch sang tiếng Việt.
@@ -2116,7 +2428,7 @@ def tai_bang_idm(url, option, cookies, outdir, log, dich_ten=True):
     link_audio = (lay_link_stream(url, option["audio_id"], cookies)
                   if option.get("audio_id") else None)
     ten_video = ten + "_hinh.mp4"
-    ten_audio = ten + "_tieng.m4a"
+    ten_audio = ten + "_tieng.mp4"
     gui_sang_idm(link_video, referer, cookie_str, folder, ten_video,
                  UA_TRINH_DUYET)
     log("Đã đẩy link hình sang IDM: " + ten_video)
@@ -5163,15 +5475,27 @@ class CuaSoJob(tk.Toplevel):
             pass
 
     def bam_tai_phu_de(self):
-        """Tai phu de ve CUNG thu muc phim (luong ngam)."""
+        """Tai phu de ve CUNG thu muc phim (luong ngam).
+        (v7.6, loi CYAN 19/11 06:28) Neu job chua co thu muc phim
+        thi TAO thu muc con theo ten phim TRUOC khi tai — khong de
+        .srt roi thang vao thu muc goc (outdir)."""
         if not self.link_info:
             messagebox.showerror("Chưa kiểm tra", "Bấm Kiểm tra link trước đã.")
             return
-        folder = getattr(self, "thu_muc_phim", "") or self.outdir_var.get().strip()
-        if not folder:
-            messagebox.showerror("Thiếu thư mục", "Chưa chọn thư mục lưu.")
-            return
         ten_viet = self.job.get("title") or ten_phim_tu_ten_file(self.video_var.get().strip(), dich=self.dich_ten_var.get()) if self.video_var.get().strip() else (self.job.get("title") or "video")
+        folder_cu = getattr(self, "thu_muc_phim", "")
+        if folder_cu:
+            folder = folder_cu
+        else:
+            outdir = self.outdir_var.get().strip()
+            if not outdir:
+                messagebox.showerror("Thiếu thư mục", "Chưa chọn thư mục lưu.")
+                return
+            folder = tao_thu_muc_duy_nhat(outdir, ten_viet)
+            self.thu_muc_phim = folder
+            self.job["folder"] = folder
+            self.luu_job_hien_tai()
+            self.ghi_log("Đã tạo thư mục phim: " + folder)
         threading.Thread(target=self._tai_phu_de_worker,
                          args=(self.link_var.get().strip(), folder, ten_viet,
                                self.cookies_var.get().strip()),
@@ -5539,9 +5863,13 @@ class CuaSoJob(tk.Toplevel):
 
     def _theo_doi_idm(self, folder, tong_dung_luong):
         """(v6) Theo dõi tiến độ tải của IDM bằng cách QUÉT dung lượng mọi
-        file media trong thư mục (kể cả .m4s, bất kể tên file) thay vì chỉ
-        đo 2 đường dẫn cố định như v5. Sửa lỗi v5 chỉ hiện 77% vì file
-        tiếng IDM lưu thực tế là .m4s, không phải .m4a như tên đã đặt.
+        file media trong thư mục (kể cả .m4s/.mp4, bất kể tên file) thay
+        vì chỉ đo 2 đường dẫn cố định như v5. Sửa lỗi v5 chỉ hiện 77%
+        vì file tiếng IDM lưu thực tế là .m4s, không phải .m4a như tên
+        đã đặt. (v7.6) File tiếng giờ đẩy sang IDM với tên _tieng.mp4
+        (stream tiếng thực chất là container mp4) nên IDM không hỏi
+        đổi tên nữa; tracker vẫn quét theo dung lượng thư mục nên
+        không phụ thuộc đuôi file.
         Khi đủ dung lượng (hoặc file ngừng lớn) thì tự nhận diện cặp file
         rồi tự gộp luôn (nếu bật)."""
         lan_khong_doi = 0
@@ -6078,12 +6406,18 @@ class CuaSoJob(tk.Toplevel):
 
 class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplevel
     """(v7.0) Tab Xu ly phu de: nap file .srt, dich sang tieng Viet bang
-    Muse/GPT/Gemini (key luu local, khong hardcode), xem/sua ban dich,
-    luu DE LEN FILE GOC (co 1 ban .bak) - theo phu luc 4: moi thu cung
-    1 thu muc du an, khong tao file lech ten. Ban dich xong co the
-    nhap lai vao tab nay roi mo tab Doc phu de de chay HoaiMy.
-    Dich chay luong ngam, tien trinh luu vao dich-phu-de-tien-trinh.json
-    trong cung thu muc phim; dong tab khong mat tien trinh."""
+    Gemini/GPT/Claude (key luu local, khong hardcode) hoac Muse (tro
+    ly chat tay, khong key — xuat prompt + SRT toan bo roi nhap ban
+    dich ve), xem/sua ban dich, luu DE LEN FILE GOC (co 1 ban .bak)
+    - theo phu luc 4: moi thu cung 1 thu muc du an, khong tao file
+    lech ten. Ban dich xong co the nhap lai vao tab nay roi mo tab
+    Doc phu de de chay HoaiMy. Dich chay luong ngam, tien trinh luu
+    vao dich-phu-de-tien-trinh.json trong cung thu muc phim; dong
+    tab khong mat tien trinh.
+    (v7.6) Mac dinh dich TOAN BO file trong 1 prompt duy nhat; loi
+    thi tu chuyen sang chia cum 20 cau (du phong), che do da dung
+    hien o thanh trang thai + log. Model tung nha cung cap chon/go
+    o o Model, luu local."""
 
     def __init__(self, quan_ly, parent=None, srt_path=None, job=None):
         super().__init__(parent if parent is not None else quan_ly)
@@ -6091,12 +6425,16 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
         self.job = job or {}
         cfg = doc_config()
         self.srt_var = tk.StringVar(value=srt_path or "")
-        self.provider_var = tk.StringVar(value=cfg.get("phu_de_provider") or "Gemini")
+        self.provider_var = tk.StringVar(
+            value=chuan_hoa_provider(cfg.get("phu_de_provider") or "Gemini"))
         self.key_var = tk.StringVar(value="")
+        self.model_var = tk.StringVar(value="")
+        self.che_do_var = tk.StringVar(value="Toàn bộ 1 prompt (mặc định)")
+        self.ghi_chu_provider_var = tk.StringVar(value="")
         self.the_loai_var = tk.StringVar(value=cfg.get("phu_de_the_loai") or "")
         self.nhan_vat_var = tk.StringVar(value=cfg.get("phu_de_nhan_vat") or "")
         self.xung_ho_var = tk.StringVar(value=cfg.get("phu_de_xung_ho") or "")
-        self.boi_canh_var = tk.StringVar(value="")
+        self.boi_canh_var = tk.StringVar(value=cfg.get("phu_de_boi_canh") or "")
         self.status_var = tk.StringVar(value="Chưa nạp file SRT.")
         self.cac_cau_goc = []
         self.cac_cau_dich = []
@@ -6108,53 +6446,72 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
         tk.Button(self, text="Chọn...", command=self._chon_srt).grid(row=0, column=2, **pad)
         tk.Label(self, text="Nhà cung cấp:").grid(row=1, column=0, sticky="w", **pad)
         self.cbo_provider = ttk.Combobox(self, textvariable=self.provider_var,
-                                         values=["Gemini", "GPT", "Muse"],
+                                         values=["Gemini", "GPT", "Claude", "Muse"],
                                          state="readonly", width=12)
         self.cbo_provider.grid(row=1, column=1, sticky="w", **pad)
-        self.cbo_provider.bind("<<ComboboxSelected>>", lambda e: self._nap_key())
-        tk.Label(self, text="API key (chỉ lưu local):").grid(row=2, column=0, sticky="w", **pad)
-        tk.Entry(self, textvariable=self.key_var, show="*").grid(row=2, column=1, sticky="ew", **pad)
-        tk.Button(self, text="Lưu key", command=self._luu_key).grid(row=2, column=2, **pad)
-        tk.Label(self, text="Thể loại:").grid(row=3, column=0, sticky="w", **pad)
-        tk.Entry(self, textvariable=self.the_loai_var).grid(row=3, column=1, sticky="ew", **pad)
-        tk.Label(self, text="Nhân vật:").grid(row=4, column=0, sticky="w", **pad)
-        tk.Entry(self, textvariable=self.nhan_vat_var).grid(row=4, column=1, sticky="ew", **pad)
-        tk.Label(self, text="Xưng hô/vai vế:").grid(row=5, column=0, sticky="w", **pad)
-        tk.Entry(self, textvariable=self.xung_ho_var).grid(row=5, column=1, sticky="ew", **pad)
-        tk.Label(self, text="Bối cảnh thêm:").grid(row=6, column=0, sticky="w", **pad)
-        tk.Entry(self, textvariable=self.boi_canh_var).grid(row=6, column=1, sticky="ew", **pad)
+        self.cbo_provider.bind("<<ComboboxSelected>>", lambda e: self._khi_doi_provider())
+        # (v7.6) Model tung nha cung cap: chon san hoac GO model khac
+        # (Combobox de o che do go duoc, khong readonly). Luu local.
+        tk.Label(self, text="Model:").grid(row=2, column=0, sticky="w", **pad)
+        self.cbo_model = ttk.Combobox(self, textvariable=self.model_var, width=24)
+        self.cbo_model.grid(row=2, column=1, sticky="w", **pad)
+        tk.Label(self, text="API key (chỉ lưu local):").grid(row=3, column=0, sticky="w", **pad)
+        self.ent_key = tk.Entry(self, textvariable=self.key_var, show="*")
+        self.ent_key.grid(row=3, column=1, sticky="ew", **pad)
+        self.btn_luu_key = tk.Button(self, text="Lưu key", command=self._luu_key)
+        self.btn_luu_key.grid(row=3, column=2, **pad)
+        # (v7.6) Che do dich: toan bo 1 prompt (mac dinh, loi thi tu
+        # chuyen cum 20 cau) hoac chi chia cum 20 cau ngay tu dau.
+        tk.Label(self, text="Chế độ dịch:").grid(row=4, column=0, sticky="w", **pad)
+        self.cbo_che_do = ttk.Combobox(self, textvariable=self.che_do_var,
+                                       values=["Toàn bộ 1 prompt (mặc định)",
+                                               "Chỉ chia cụm 20 câu"],
+                                       state="readonly", width=28)
+        self.cbo_che_do.grid(row=4, column=1, sticky="w", **pad)
+        self.cbo_che_do.bind("<<ComboboxSelected>>", lambda e: self._luu_key())
+        tk.Label(self, text="Thể loại:").grid(row=5, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.the_loai_var).grid(row=5, column=1, sticky="ew", **pad)
+        tk.Label(self, text="Nhân vật:").grid(row=6, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.nhan_vat_var).grid(row=6, column=1, sticky="ew", **pad)
+        tk.Label(self, text="Xưng hô/vai vế:").grid(row=7, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.xung_ho_var).grid(row=7, column=1, sticky="ew", **pad)
+        tk.Label(self, text="Bối cảnh thêm:").grid(row=8, column=0, sticky="w", **pad)
+        tk.Entry(self, textvariable=self.boi_canh_var).grid(row=8, column=1, sticky="ew", **pad)
+        tk.Label(self, textvariable=self.ghi_chu_provider_var, fg="gray",
+                 wraplength=640, justify="left").grid(
+                     row=9, column=0, columnspan=3, sticky="w", **pad)
         hang = tk.Frame(self)
-        hang.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        hang.grid(row=10, column=0, columnspan=3, sticky="ew", **pad)
         self.btn_dich = tk.Button(hang, text="DỊCH PHỤ ĐỀ", font=("", 11, "bold"),
                                   command=self.bam_dich)
         self.btn_dich.pack(side="left", padx=4)
         tk.Button(hang, text="Dừng", command=self.bam_dung).pack(side="left", padx=4)
-        tk.Button(hang, text="Xuất prompt + SRT", command=self.bam_xuat_prompt).pack(side="left", padx=4)
+        tk.Button(hang, text="Xuất prompt + SRT toàn bộ", command=self.bam_xuat_prompt).pack(side="left", padx=4)
         tk.Button(hang, text="Nhập bản dịch về", command=self.bam_nhap_ban_dich).pack(side="left", padx=4)
         tk.Button(hang, text="Mở tab Đọc phụ đề", command=self.bam_mo_doc).pack(side="left", padx=4)
         tk.Button(hang, text="Dịch thủ công", command=self.bam_dich_thu_cong).pack(side="left", padx=4)
         hang2 = tk.Frame(self)
-        hang2.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
+        hang2.grid(row=11, column=0, columnspan=3, sticky="ew", **pad)
         tk.Button(hang2, text="LƯU ĐÈ LÊN FILE GỐC (.bak giữ lại)",
                   font=("", 11, "bold"), command=self.bam_luu_de_goc).pack(side="left", padx=4)
         tk.Button(hang2, text="Lưu bản _vi riêng", command=self.bam_luu_vi_rieng).pack(side="left", padx=4)
         self.tien_trinh = ttk.Progressbar(self, mode="determinate", maximum=100)
-        self.tien_trinh.grid(row=9, column=0, columnspan=3, sticky="ew", **pad)
+        self.tien_trinh.grid(row=12, column=0, columnspan=3, sticky="ew", **pad)
         tk.Label(self, text="Bản dịch (xem/sửa được trước khi lưu):").grid(
-            row=10, column=0, columnspan=3, sticky="w", **pad)
+            row=13, column=0, columnspan=3, sticky="w", **pad)
         self.txt_dich = scrolledtext.ScrolledText(self, height=16)
-        self.txt_dich.grid(row=11, column=0, columnspan=3, sticky="nsew", **pad)
+        self.txt_dich.grid(row=14, column=0, columnspan=3, sticky="nsew", **pad)
         tk.Label(self, textvariable=self.status_var, fg="gray").grid(
-            row=12, column=0, columnspan=3, sticky="ew", **pad)
+            row=15, column=0, columnspan=3, sticky="ew", **pad)
         self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(11, weight=1)
+        self.grid_rowconfigure(14, weight=1)
         # (v7.5) Dich thu cong: khung an, hien khi bam "Dich thu cong".
         # Mo SRT goc, tu go tieng Viet tung cau (o nhap canh tung cau),
         # khong goi AI, van giu moc gio goc.
         self.khung_thu_cong = tk.LabelFrame(
             self, text=" Dịch thủ công (không gọi AI — tự gõ từng câu, giữ nguyên mốc giờ) ",
             padx=8, pady=6)
-        self.khung_thu_cong.grid(row=13, column=0, columnspan=3,
+        self.khung_thu_cong.grid(row=16, column=0, columnspan=3,
                                  sticky="nsew", **pad)
         self.khung_thu_cong.grid_remove()
         hang_tc = tk.Frame(self.khung_thu_cong)
@@ -6188,26 +6545,95 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
             self._nap_srt(srt_path)
 
     def _khoa_key(self, provider):
+        # (v7.6) "Claude" = Anthropic. "Muse" (tro ly Muse, chat tay)
+        # KHONG co key -> tra None.
         return {"Gemini": "gemini_api_key", "GPT": "openai_api_key",
-                "Muse": "anthropic_api_key"}.get(provider, "gemini_api_key")
+                "Claude": "anthropic_api_key"}.get(
+                    chuan_hoa_provider(provider))
+
+    def _khoa_model(self, provider):
+        return {"Gemini": "phu_de_model_gemini",
+                "GPT": "phu_de_model_gpt",
+                "Claude": "phu_de_model_claude"}.get(
+                    chuan_hoa_provider(provider))
+
+    def _che_do_tu_hien_thi(self):
+        return "cum" if "cụm" in (self.che_do_var.get() or "") else "toan_bo"
+
+    def _hien_thi_tu_che_do(self, che_do):
+        return ("Chỉ chia cụm 20 câu" if (che_do or "toan_bo") == "cum"
+                else "Toàn bộ 1 prompt (mặc định)")
+
+    def _nap_model(self):
+        """Nap model + danh sach goi y theo provider; Muse thi tat o Model."""
+        provider = chuan_hoa_provider(self.provider_var.get())
+        goi_y = {"Gemini": [MODEL_GEMINI_MAC_DINH, MODEL_GEMINI_DU_PHONG],
+                 "GPT": [MODEL_GPT_MAC_DINH, "gpt-4o"],
+                 "Claude": [MODEL_CLAUDE_MAC_DINH]}.get(provider, [])
+        try:
+            self.cbo_model.configure(values=goi_y)
+        except Exception:
+            pass
+        cfg = doc_config()
+        self.model_var.set(model_cua_provider(provider, cfg))
+        try:
+            self.cbo_model.configure(
+                state="disabled" if provider == "Muse" else "normal")
+        except Exception:
+            pass
+
+    def _cap_nhat_ghi_chu_provider(self):
+        provider = chuan_hoa_provider(self.provider_var.get())
+        la_muse = provider == "Muse"
+        try:
+            self.ent_key.configure(state="disabled" if la_muse else "normal")
+            self.btn_luu_key.configure(state="disabled" if la_muse else "normal")
+        except Exception:
+            pass
+        if la_muse:
+            self.ghi_chu_provider_var.set(
+                "Muse = trợ lý Muse (chat tay, KHÔNG dùng API key): bấm "
+                "'Xuất prompt + SRT toàn bộ', dán file vào chat với "
+                "Muse, rồi bấm 'Nhập bản dịch về'.")
+        else:
+            self.ghi_chu_provider_var.set(
+                "Key và model chỉ lưu local trong config.json, không "
+                "gửi đi đâu khác ngoài API của nhà cung cấp đã chọn.")
+
+    def _khi_doi_provider(self):
+        self._nap_key()
+        self._cap_nhat_ghi_chu_provider()
 
     def _nap_key(self):
         try:
             cfg = doc_config()
-            self.key_var.set(cfg.get(self._khoa_key(self.provider_var.get()), "") or "")
+            khoa = self._khoa_key(self.provider_var.get())
+            self.key_var.set((cfg.get(khoa) or "") if khoa else "")
+            che_do = cfg.get("phu_de_che_do") or "toan_bo"
+            self.che_do_var.set(self._hien_thi_tu_che_do(che_do))
         except Exception:
             pass
+        self._nap_model()
+        self._cap_nhat_ghi_chu_provider()
 
     def _luu_key(self):
         try:
             cfg = doc_config()
-            cfg[self._khoa_key(self.provider_var.get())] = self.key_var.get().strip()
-            cfg["phu_de_provider"] = self.provider_var.get()
+            provider = chuan_hoa_provider(self.provider_var.get())
+            cfg["phu_de_provider"] = provider
+            khoa = self._khoa_key(provider)
+            if khoa:
+                cfg[khoa] = self.key_var.get().strip()
+            khoa_model = self._khoa_model(provider)
+            if khoa_model and self.model_var.get().strip():
+                cfg[khoa_model] = self.model_var.get().strip()
+            cfg["phu_de_che_do"] = self._che_do_tu_hien_thi()
             cfg["phu_de_the_loai"] = self.the_loai_var.get()
             cfg["phu_de_nhan_vat"] = self.nhan_vat_var.get()
             cfg["phu_de_xung_ho"] = self.xung_ho_var.get()
+            cfg["phu_de_boi_canh"] = self.boi_canh_var.get()
             luu_config(cfg)
-            self.status_var.set("Đã lưu key (local, không gửi đi đâu).")
+            self.status_var.set("Đã lưu nhà cung cấp / key / model / chế độ dịch (local).")
         except Exception as e:
             messagebox.showerror("Lỗi", str(e))
 
@@ -6254,30 +6680,51 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
         if not self.cac_cau_goc:
             messagebox.showerror("Lỗi", "Không đọc được câu nào trong file SRT.")
             return
+        provider = chuan_hoa_provider(self.provider_var.get())
+        if provider == "Muse":
+            # (v7.6) Muse la chat tay, khong co API: khong khoi worker.
+            messagebox.showinfo(
+                "Muse — dịch bằng chat tay",
+                "Muse không có API key trong tool.\n\n"
+                "Bấm 'Xuất prompt + SRT toàn bộ' để lấy file prompt + "
+                "toàn bộ SRT gốc, dán vào chat với Muse, rồi bấm "
+                "'Nhập bản dịch về' để tool kiểm tra khớp file gốc "
+                "rồi mới cho lưu đè.")
+            return
         self._luu_key()
         self.dang_chay = True
         self.dung_event.clear()
         self.btn_dich.config(state="disabled")
         self.status_var.set("Đang dịch phụ đề...")
-        args = (list(self.cac_cau_goc), self.provider_var.get(),
+        args = (list(self.cac_cau_goc), provider,
                 self.key_var.get().strip(), self.the_loai_var.get(),
                 self.nhan_vat_var.get(), self.xung_ho_var.get(),
-                self.boi_canh_var.get())
+                self.boi_canh_var.get(),
+                self.model_var.get().strip(),
+                self._che_do_tu_hien_thi())
         threading.Thread(target=self._dich_worker, args=args, daemon=True).start()
 
-    def _dich_worker(self, cac_cau, provider, key, the_loai, nhan_vat, xung_ho, boi_canh):
+    def _dich_worker(self, cac_cau, provider, key, the_loai, nhan_vat, xung_ho, boi_canh, model="", che_do="toan_bo"):
         try:
-            ket_qua = dich_srt_theo_cum(
+            ket_qua, che_do_da_dung = dich_srt(
                 cac_cau, provider, key, the_loai, nhan_vat, xung_ho, boi_canh,
+                model=model or None, che_do=che_do,
                 tien_trinh_cb=lambda pct: self.after(0, lambda: self.tien_trinh.configure(value=pct)),
-                dung_event=self.dung_event)
-            self.after(0, self._dich_xong, ket_qua)
+                dung_event=self.dung_event,
+                log=lambda s: self.after(0, lambda: self.status_var.set(s)))
+            self.after(0, self._dich_xong, ket_qua, che_do_da_dung)
         except Exception as e:
             self.after(0, self._dich_loi, str(e))
 
-    def _dich_xong(self, ket_qua):
+    def _dich_xong(self, ket_qua, che_do=""):
         self.dang_chay = False
         self.btn_dich.config(state="normal")
+        # (v7.6) Kiem tra phong thu: so cau dich phai khop goc, neu
+        # khong thi KHONG thay preview, bao loi ro.
+        if not ket_qua or len(ket_qua) != len(self.cac_cau_goc):
+            self.status_var.set("Dịch lỗi: bản dịch có %d câu, file gốc có %d câu — không khớp, chưa lưu gì." % (len(ket_qua or []), len(self.cac_cau_goc)))
+            messagebox.showerror("Dịch lỗi", "Bản dịch trả về %d câu, file gốc có %d câu — không khớp nên không nạp. Thử dịch lại." % (len(ket_qua or []), len(self.cac_cau_goc)))
+            return
         self.cac_cau_dich = ket_qua or []
         self.tien_trinh.configure(value=100)
         text = "".join("%d\n%s --> %s\n%s\n\n" % (
@@ -6295,7 +6742,7 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
                            "tong_cau": len(self.cac_cau_goc)}, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
-        self.status_var.set("Đã dịch xong %d/%d câu. Kiểm tra lại trong ô dưới rồi bấm Lưu đè lên file gốc." % (len(self.cac_cau_dich), len(self.cac_cau_goc)))
+        self.status_var.set("Đã dịch xong %d/%d câu (chế độ: %s). Kiểm tra lại trong ô dưới rồi bấm Lưu đè lên file gốc." % (len(self.cac_cau_dich), len(self.cac_cau_goc), che_do or "?"))
 
     def _dich_loi(self, msg):
         self.dang_chay = False
@@ -6308,8 +6755,10 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
         self.status_var.set("Đã yêu cầu dừng sau cụm đang dịch.")
 
     def bam_xuat_prompt(self):
-        """Xuat prompt + SRT ra file text cung thu muc phim de nguoi dung
-        tu gui cho Muse/GPT/Gemini trong chat (khong can key)."""
+        """(v7.6) Xuat TOAN BO prompt + TOAN BO SRT goc ra file text
+        cung thu muc phim, de dan vao chat voi Muse (chat tay, khong
+        can key) hoac GPT/Gemini. File chua dung prompt toan bo cua
+        tao_prompt_dich_phu_de + toan bo SRT goc."""
         p = self.srt_var.get().strip()
         if not p or not os.path.isfile(p):
             messagebox.showerror("Thiếu file", "Chọn file SRT trước đã.")
@@ -6333,7 +6782,7 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
             except Exception:
                 pass
             messagebox.showinfo("Đã xuất prompt",
-                                "File prompt + SRT:\n%s\n\nĐã copy prompt vào clipboard (nếu được)." % out)
+                                "File prompt + SRT toàn bộ:\n%s\n\nĐã copy prompt vào clipboard (nếu được).\nDán vào chat với Muse rồi bấm 'Nhập bản dịch về'." % out)
         except Exception as e:
             messagebox.showerror("Lỗi", str(e))
 
@@ -6348,6 +6797,15 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
         if not cac:
             messagebox.showerror("Chưa có bản dịch", "Bấm Dịch phụ đề trước, hoặc nhập bản dịch về rồi mới lưu.")
             return
+        # (v7.6) Kiem tra CUNG truoc khi luu de: so cau/timestamp
+        # phai khop file goc — khong khop thi KHONG luu, file goc
+        # con nguyen (ke ca ban dich nhap ve tu Muse).
+        if self.cac_cau_goc:
+            ok, loi = kiem_tra_ban_dich_khop_goc(self.cac_cau_goc, cac)
+            if not ok:
+                messagebox.showerror("Bản dịch không khớp file gốc",
+                                     "Không lưu đè: %s\nFile gốc còn nguyên." % loi)
+                return
         try:
             duong, bak = luu_ban_dich_an_toan(p, cac)
             self.cac_cau_dich = cac
@@ -6386,26 +6844,51 @@ class CuaSoXuLyPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Toplev
             messagebox.showerror("Lỗi lưu", str(e))
 
     def bam_nhap_ban_dich(self):
-        """Nhap ban dich (.srt da dich o ngoai) ve tab nay de chay tiep
-        (luu de / mo tab Doc phu de)."""
+        """(v7.6) Nhap ban dich (.srt da dich o ngoai — thuong la Muse
+        tra ve sau khi dan prompt toan bo) ve tab nay. Kiem tra so cau/
+        timestamp khop file goc TRUOC khi nap: khong khop thi bao loi
+        chi tiet va KHONG thay preview; khop moi nap de luu de
+        (co .bak 1 lan nhu cu)."""
         p = filedialog.askopenfilename(title="Chọn file SRT đã dịch",
                                        filetypes=[("Phụ đề SRT", "*.srt"), ("Mọi file", "*.*")])
         if not p:
             return
         try:
             cac = doc_srt(p)
-            self.cac_cau_dich = cac
-            text = "".join("%d\n%s --> %s\n%s\n\n" % (
-                c.get("chi_so") or 0, dinh_dang_ms_srt(c.get("bat_dau_ms") or 0),
-                dinh_dang_ms_srt(c.get("ket_thuc_ms") or 0), c.get("text") or "")
-                for c in cac)
-            self.txt_dich.delete("1.0", "end")
-            self.txt_dich.insert("1.0", text)
-            # Ban dich nhap ve tro thanh ban dich hien tai cua file goc
-            # dang mo (de luu de / doc tiep), khong doi duong dan goc.
-            self.status_var.set("Đã nhập %d câu bản dịch từ %s." % (len(cac), os.path.basename(p)))
         except Exception as e:
             messagebox.showerror("Lỗi", str(e))
+            return
+        if not cac:
+            messagebox.showerror("Lỗi", "File bản dịch không có câu nào.")
+            return
+        goc_path = self.srt_var.get().strip()
+        if not self.cac_cau_goc and goc_path and os.path.isfile(goc_path):
+            self._nap_srt(goc_path)
+        if self.cac_cau_goc:
+            ok, loi = kiem_tra_ban_dich_khop_goc(self.cac_cau_goc, cac)
+            if not ok:
+                messagebox.showerror(
+                    "Bản dịch không khớp file gốc",
+                    "Không nạp bản dịch này: %s\n\nFile gốc: %s\nBản dịch: %s"
+                    % (loi, goc_path or "(chưa chọn)", p))
+                return
+        else:
+            messagebox.showinfo(
+                "Đã nhập (chưa đối chiếu được)",
+                "Đã nhập %d câu từ %s, nhưng chưa nạp được file SRT gốc "
+                "để đối chiếu số câu/timestamp.\nNạp file gốc vào ô SRT "
+                "trước rồi nhập lại, hoặc kiểm tra kỹ trước khi bấm "
+                "Lưu đè." % (len(cac), os.path.basename(p)))
+        self.cac_cau_dich = cac
+        text = "".join("%d\n%s --> %s\n%s\n\n" % (
+            c.get("chi_so") or 0, dinh_dang_ms_srt(c.get("bat_dau_ms") or 0),
+            dinh_dang_ms_srt(c.get("ket_thuc_ms") or 0), c.get("text") or "")
+            for c in cac)
+        self.txt_dich.delete("1.0", "end")
+        self.txt_dich.insert("1.0", text)
+        # Ban dich nhap ve tro thanh ban dich hien tai cua file goc
+        # dang mo (de luu de / doc tiep), khong doi duong dan goc.
+        self.status_var.set("Đã nhập %d câu bản dịch từ %s (đã kiểm tra khớp file gốc)." % (len(cac), os.path.basename(p)))
 
     def bam_mo_doc(self):
         p = self.srt_var.get().strip()
@@ -6556,7 +7039,7 @@ class QuanLy(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("%s (v%s)" % (STUDIO_TITLE, VERSION))
-        self.geometry("1020x640")
+        self.geometry("1020x860")
         self.resizable(True, True)
         self.cua_so_mo = {}
         self.job_da_chon_id = None
@@ -6612,17 +7095,80 @@ class QuanLy(tk.Tk):
             row=0, column=0, columnspan=3, sticky="w", **pad)
         khung_bang_ngoai = tk.Frame(self.tab_quan_ly)
         khung_bang_ngoai.grid(row=1, column=0, columnspan=3, sticky="nsew", **pad)
-        self._canvas_bang = tk.Canvas(khung_bang_ngoai, height=220)
-        sb_bang = ttk.Scrollbar(khung_bang_ngoai, orient="vertical",
-                                command=self._canvas_bang.yview)
-        self.khung_bang = tk.Frame(self._canvas_bang)
-        self.khung_bang.bind("<Configure>", lambda e: self._canvas_bang.configure(
-            scrollregion=self._canvas_bang.bbox("all")))
-        self._canvas_bang.create_window((0, 0), window=self.khung_bang, anchor="nw")
-        self._canvas_bang.configure(yscrollcommand=sb_bang.set)
-        self._canvas_bang.pack(side="left", fill="both", expand=True)
-        sb_bang.pack(side="right", fill="y")
-        self.bang = None
+        # (v7.6) Bang lich su = ttk.Treeview cot CO DINH, thay cho
+        # Canvas + moi dong 1 Frame o v7.5 (header o frame cha, cot
+        # trong dong weight rieng -> header/dong khong thang hang,
+        # khong co scrollbar ngang, cot tu gian theo noi dung dai).
+        # Cot khong gian theo noi dung: gia tri hien da rut gon
+        # (rut_gon_chu/rut_gon_link/rut_gon_duong_dan), gia tri day
+        # du hien o label chi tiet duoi bang khi chon dong.
+        cot_bang = ("ten", "link", "trang_thai", "thu_muc", "phu_de")
+        self.tree_du_an = ttk.Treeview(khung_bang_ngoai, columns=cot_bang,
+                                       show="headings", height=7)
+        self.tree_du_an.heading("ten", text="Tên phim")
+        self.tree_du_an.heading("link", text="Link")
+        self.tree_du_an.heading("trang_thai", text="Trạng thái")
+        self.tree_du_an.heading("thu_muc", text="Đường dẫn lưu thư mục")
+        self.tree_du_an.heading("phu_de", text="Phụ đề")
+        self.tree_du_an.column("ten", width=260, minwidth=180,
+                               stretch=tk.YES, anchor="w")
+        self.tree_du_an.column("link", width=180, minwidth=120,
+                               stretch=tk.NO, anchor="w")
+        self.tree_du_an.column("trang_thai", width=110, minwidth=90,
+                               stretch=tk.NO, anchor="w")
+        self.tree_du_an.column("thu_muc", width=180, minwidth=120,
+                               stretch=tk.NO, anchor="w")
+        self.tree_du_an.column("phu_de", width=220, minwidth=150,
+                               stretch=tk.NO, anchor="w")
+        sb_bang_doc = ttk.Scrollbar(khung_bang_ngoai, orient="vertical",
+                                    command=self.tree_du_an.yview)
+        sb_bang_ngang = ttk.Scrollbar(khung_bang_ngoai, orient="horizontal",
+                                      command=self.tree_du_an.xview)
+        self.tree_du_an.configure(yscrollcommand=sb_bang_doc.set,
+                                  xscrollcommand=sb_bang_ngang.set)
+        self.tree_du_an.grid(row=0, column=0, sticky="nsew")
+        sb_bang_doc.grid(row=0, column=1, sticky="ns")
+        sb_bang_ngang.grid(row=1, column=0, sticky="ew")
+        self.tree_du_an.bind("<<TreeviewSelect>>", self._khi_chon_du_an)
+        self.tree_du_an.bind("<Double-1>", self._mo_doi_du_an)
+        self.bang = self.tree_du_an
+        self.chi_tiet_du_an_var = tk.StringVar(
+            value="Chưa chọn dự án nào — bấm 1 dòng trong bảng để xem đầy đủ.")
+        tk.Label(khung_bang_ngoai, textvariable=self.chi_tiet_du_an_var,
+                 fg="gray", wraplength=900, justify="left",
+                 anchor="w").grid(row=2, column=0, columnspan=2,
+                                  sticky="w", padx=3, pady=2)
+        # (v7.6) Hang nut hanh dong cho dong DANG CHON (Treeview
+        # khong chua nut tung dong). Tai dung dung ham cu.
+        hang_nut_bang = tk.Frame(khung_bang_ngoai)
+        hang_nut_bang.grid(row=3, column=0, columnspan=2, sticky="w",
+                           padx=3, pady=2)
+        self.btn_mo_thu_muc_du_an = tk.Button(
+            hang_nut_bang, text="Mở thư mục dự án",
+            command=lambda: self._mo_thu_muc_du_an(self._lay_job_da_chon()))
+        self.btn_mo_thu_muc_du_an.pack(side="left", padx=2)
+        self.btn_mo_thu_muc_phu_de = tk.Button(
+            hang_nut_bang, text="Mở thư mục phụ đề",
+            command=lambda: self._mo_thu_muc_phu_de(self._lay_job_da_chon()))
+        self.btn_mo_thu_muc_phu_de.pack(side="left", padx=2)
+        self.btn_lam_lai_du_an = tk.Button(
+            hang_nut_bang, text="Làm lại",
+            command=lambda: self._lam_lai_du_an(self._lay_job_da_chon()))
+        self.btn_lam_lai_du_an.pack(side="left", padx=2)
+        self.btn_dich_phu_de_du_an = tk.Button(
+            hang_nut_bang, text="Dịch phụ đề",
+            command=self._dich_hoac_them_phu_de_du_an)
+        self.btn_dich_phu_de_du_an.pack(side="left", padx=2)
+        self.btn_xoa_du_an = tk.Button(
+            hang_nut_bang, text="Xóa",
+            command=lambda: self._xoa_du_an(self._lay_job_da_chon()))
+        self.btn_xoa_du_an.pack(side="left", padx=2)
+        khung_bang_ngoai.grid_columnconfigure(0, weight=1)
+        # (v7.6, sua sau test xvfb) minsize: tab chi cao 640 trong
+        # khi noi dung xin ~800 — grid se lay het phan thieu o
+        # row co weight duy nhat (chinh la row chua bang) nen
+        # Treeview bi bop ve 0px. minsize giu bang luon thay duoc.
+        khung_bang_ngoai.grid_rowconfigure(0, weight=1, minsize=170)
 
         tk.Label(self.tab_quan_ly, text="Thư mục lưu:").grid(row=2, column=0, sticky="w", **pad)
         tk.Entry(self.tab_quan_ly, textvariable=self.outdir_var).grid(
@@ -6636,7 +7182,10 @@ class QuanLy(tk.Tk):
         tk.Button(self.tab_quan_ly, text="Chọn...",
                   command=self.chon_cookies).grid(row=3, column=2, **pad)
         tk.Label(self.tab_quan_ly, text="Mỗi cửa sổ xử lý 1 video (tải + gộp). Đóng cửa sổ "
-                 "khi xong, hoặc đóng = hủy theo dõi (job vẫn lưu trong lịch sử).",
+                 "khi xong, hoặc đóng = hủy theo dõi (job vẫn lưu trong lịch sử).\n"
+                 "Cookie: KHÔNG login trong tool — login 1 lần trong trình duyệt rồi export cookies.txt "
+                 "bằng Get cookies.txt LOCALLY, import vào ô trên. Cookie Bilibili chỉ dùng cho Bilibili "
+                 "(yt-dlp + API phụ đề); cookie của web AI (nếu có) là riêng từng web, không dùng chung.",
                  fg="gray", wraplength=600, justify="left").grid(
             row=4, column=0, columnspan=3, sticky="w", **pad)
 
@@ -6692,7 +7241,10 @@ class QuanLy(tk.Tk):
         self._job_1mach = None
 
         self.tab_quan_ly.grid_columnconfigure(1, weight=1)
-        self.tab_quan_ly.grid_rowconfigure(1, weight=1)
+        # (v7.6) minsize 370: label chi tiet 5-7 dong (~124px) +
+        # Treeview 170 + scrollbar + hang nut 38 = ~351px; nho
+        # hon la hang nut roi xuong duoi mep frame va bi cat mat.
+        self.tab_quan_ly.grid_rowconfigure(1, weight=1, minsize=370)
         self.protocol("WM_DELETE_WINDOW", self.dong_quan_ly)
 
         self.cap_nhat_bang()
@@ -6722,79 +7274,178 @@ class QuanLy(tk.Tk):
         self._xay_bang_du_an()
 
     def _xay_bang_du_an(self):
-        """(v7.0) Xay lai bang lich su du an: moi dong 1 Frame, cac cot
-        Ten phim (TV) | Link | Trang thai | Duong dan luu thu muc
-        (nut, bam de mo thu muc) | Phu de | nut hanh dong tung dong.
-        Truong nao quet khong ra thi de TRONG, khong doan."""
+        """(v7.6) Xay lai bang lich su du an dang Treeview cot co
+        dinh: Ten phim | Link | Trang thai | Duong dan luu thu muc
+        | Phu de. Moi dong chi hien gia tri DA RUT GON (co "…"),
+        gia tri day du luu o job + hien o label chi tiet duoi bang
+        khi chon dong, khong mat. Truong nao quet khong ra thi de
+        TRONG, khong doan. Khong xay lai khi chi chon dong (chon
+        dong chi goi _khi_chon_du_an) de khong mat vi tri cuon."""
+        tree = getattr(self, "tree_du_an", None)
+        if tree is None:
+            return
         try:
-            for w in list(self.khung_bang.winfo_children()):
-                w.destroy()
+            chon_cu = self.job_da_chon_id
+            for iid in list(tree.get_children()):
+                tree.delete(iid)
+            for r, job in enumerate(doc_jobs()):
+                jid = job.get("id") or ("dong-%d" % r)
+                ten = job.get("title") or ""
+                link = job.get("link") or ""
+                tt = dinh_dang_trang_thai(job.get("status") or "moi")
+                # (v7.6) Khong fallback ve outdir: job chua co folder
+                # thi hien "(chua co thu muc)" chu khong gia vo da co
+                # thu muc phim (loi .srt roi thang vao thu muc goc).
+                folder = job.get("folder") or ""
+                if job.get("has_subtitle") is True:
+                    ten_srt = os.path.basename(job.get("subtitle_file") or "")
+                    pd = "Có" + ((" - " + rut_gon_chu(ten_srt, 30))
+                                 if ten_srt else "")
+                elif job.get("has_subtitle") is False:
+                    pd = "Không"
+                else:
+                    pd = ""
+                tree.insert("", "end", iid=jid, values=(
+                    rut_gon_chu(ten, 40),
+                    rut_gon_link(link),
+                    tt,
+                    rut_gon_duong_dan(folder) if folder
+                    else "(chưa có thư mục)",
+                    pd))
+            if chon_cu and tree.exists(chon_cu):
+                tree.selection_set(chon_cu)
+                tree.see(chon_cu)
+            self._hien_chi_tiet_du_an(self._lay_job_da_chon())
+            self._cap_nhat_nut_hanh_dong()
         except Exception:
             return
-        tieu_de = ["Tên phim", "Link", "Trạng thái",
-                   "Đường dẫn lưu thư mục", "Phụ đề", "Hành động"]
-        for c, t in enumerate(tieu_de):
-            tk.Label(self.khung_bang, text=t, font=("", 9, "bold"),
-                     anchor="w").grid(row=0, column=c, sticky="w", padx=3, pady=2)
-        for r, job in enumerate(doc_jobs(), start=1):
-            jid = job.get("id") or ""
-            chon = (jid == self.job_da_chon_id)
-            mau = "#dbeafe" if chon else "white"
-            dong = tk.Frame(self.khung_bang, bg=mau, relief="groove", borderwidth=1)
-            dong.grid(row=r, column=0, columnspan=6, sticky="ew", padx=2, pady=1)
-            for c in range(6):
-                dong.grid_columnconfigure(c, weight=1 if c in (0, 1, 3) else 0)
-            ten = job.get("title") or ""
-            link = job.get("link") or ""
-            tt = dinh_dang_trang_thai(job.get("status") or "moi")
-            folder = job.get("folder") or job.get("outdir") or ""
-            if job.get("has_subtitle") is True:
-                ten_srt = os.path.basename(job.get("subtitle_file") or "")
-                pd = "Có" + ((" - " + ten_srt) if ten_srt else "")
-            elif job.get("has_subtitle") is False:
-                pd = "Không"
-            else:
-                pd = ""
-            tk.Label(dong, text=ten, bg=mau, anchor="w", wraplength=220,
-                     justify="left").grid(row=0, column=0, sticky="w", padx=3)
-            tk.Label(dong, text=link, bg=mau, anchor="w", wraplength=220,
-                     justify="left", fg="gray").grid(row=0, column=1, sticky="w", padx=3)
-            tk.Label(dong, text=tt, bg=mau, anchor="w").grid(row=0, column=2, sticky="w", padx=3)
-            tk.Button(dong, text=(folder or "(chưa có)"), anchor="w",
-                      command=lambda j=job: self._mo_thu_muc_du_an(j)).grid(
-                          row=0, column=3, sticky="ew", padx=3)
-            tk.Label(dong, text=pd, bg=mau, anchor="w").grid(row=0, column=4, sticky="w", padx=3)
-            hang = tk.Frame(dong, bg=mau)
-            hang.grid(row=0, column=5, sticky="e", padx=3)
-            if (job.get("status") or "moi") != "xong":
-                tk.Button(hang, text="Làm lại",
-                          command=lambda j=job: self._lam_lai_du_an(j)).pack(side="left", padx=1)
-            if job.get("subtitle_file") and os.path.isfile(job.get("subtitle_file")):
-                tk.Button(hang, text="Dịch phụ đề",
-                          command=lambda j=job: self._dich_phu_de_du_an(j)).pack(side="left", padx=1)
-            else:
-                # (v7.0, phu luc 1) Cot Phu de trong -> nut Them phu de.
-                tk.Button(hang, text="Thêm phụ đề",
-                          command=lambda j=job: self._them_phu_de_du_an(j)).pack(side="left", padx=1)
-            tk.Button(hang, text="Xóa",
-                      command=lambda j=job: self._xoa_du_an(j)).pack(side="left", padx=1)
-            def _chon(e, jid=jid):
-                self.job_da_chon_id = jid
-                self._xay_bang_du_an()
-            def _mo_doi(e, j=job):
-                self.job_da_chon_id = j.get("id")
-                self.mo_cua_so_job(j)
-            dong.bind("<Button-1>", _chon)
-            dong.bind("<Double-1>", _mo_doi)
-            for w in dong.winfo_children():
-                try:
-                    w.bind("<Button-1>", _chon)
-                except Exception:
-                    pass
+
+    def _lay_job_da_chon(self):
+        """Job cua dong dang chon trong Treeview (theo
+        job_da_chon_id). Tra None neu chua chon."""
+        jid = getattr(self, "job_da_chon_id", None)
+        if not jid:
+            return None
+        for job in doc_jobs():
+            if job.get("id") == jid:
+                return job
+        return None
+
+    def _hien_chi_tiet_du_an(self, job):
+        """(v7.6) Hien DAY DU gia tri cua dong dang chon o label
+        duoi bang (ten/link/thu muc/duong dan file .srt day du),
+        vi trong bang chi hien ban rut gon."""
+        var = getattr(self, "chi_tiet_du_an_var", None)
+        if var is None:
+            return
+        if not job:
+            var.set("Chưa chọn dự án nào — bấm 1 dòng trong bảng "
+                    "để xem đầy đủ.")
+            return
+        srt = job.get("subtitle_file") or ""
+        var.set("Tên phim: %s\nLink: %s\nThư mục: %s\nPhụ đề: %s"
+                % (job.get("title") or "(chưa có tên)",
+                   job.get("link") or "(chưa có link)",
+                   job.get("folder") or "(chưa có thư mục)",
+                   srt or "Chưa có file phụ đề"))
+
+    def _cap_nhat_nut_hanh_dong(self):
+        """(v7.6) Bat/tat hang nut duoi bang theo dong dang chon:
+        chua chon thi tat het; co phu de that thi nut Dich, khong
+        thi nut Them phu de; da xong thi tat nut Lam lai."""
+        job = self._lay_job_da_chon()
+        co_job = job is not None
+        co_srt = bool(job and job.get("subtitle_file")
+                      and os.path.isfile(job.get("subtitle_file")))
+        da_xong = bool(job and (job.get("status") or "moi") == "xong")
+        for ten_nut in ("btn_mo_thu_muc_du_an", "btn_mo_thu_muc_phu_de",
+                        "btn_lam_lai_du_an", "btn_dich_phu_de_du_an",
+                        "btn_xoa_du_an"):
+            nut = getattr(self, ten_nut, None)
+            if nut is None:
+                continue
+            nut.configure(state="normal" if co_job else "disabled")
+        nut_pd = getattr(self, "btn_mo_thu_muc_phu_de", None)
+        if nut_pd is not None:
+            nut_pd.configure(state="normal" if co_srt else "disabled")
+        nut_lam = getattr(self, "btn_lam_lai_du_an", None)
+        if nut_lam is not None:
+            nut_lam.configure(
+                state="disabled" if (not co_job or da_xong) else "normal")
+        nut_dich = getattr(self, "btn_dich_phu_de_du_an", None)
+        if nut_dich is not None:
+            nut_dich.configure(
+                text="Dịch phụ đề" if co_srt else "Thêm phụ đề")
+
+    def _khi_chon_du_an(self, event=None):
+        """Bam 1 lan: chon dong, cap nhat job_da_chon_id + label
+        chi tiet + nut hanh dong. KHONG xay lai bang."""
+        tree = getattr(self, "tree_du_an", None)
+        if tree is None:
+            return
+        chon = tree.selection()
+        if not chon:
+            return
+        self.job_da_chon_id = chon[0]
+        self._hien_chi_tiet_du_an(self._lay_job_da_chon())
+        self._cap_nhat_nut_hanh_dong()
+
+    def _mo_doi_du_an(self, event=None):
+        """Bam dup: mo lai cua so job cua dong duoi con tro."""
+        tree = getattr(self, "tree_du_an", None)
+        if tree is None:
+            return
+        try:
+            iid = tree.identify_row(event.y) if event is not None else ""
+        except Exception:
+            iid = ""
+        if not iid:
+            return
+        self.job_da_chon_id = iid
+        job = self._lay_job_da_chon()
+        if job:
+            self.mo_cua_so_job(job)
+
+    def _dich_hoac_them_phu_de_du_an(self):
+        """Nut Dich/Them phu de duoi bang: co file .srt that thi
+        dich, khong thi them file ngoai (dung logic cu)."""
+        job = self._lay_job_da_chon()
+        if not job:
+            return
+        if job.get("subtitle_file") and os.path.isfile(
+                job.get("subtitle_file")):
+            self._dich_phu_de_du_an(job)
+        else:
+            self._them_phu_de_du_an(job)
+
+    def _mo_thu_muc_phu_de(self, job):
+        """(v7.6) Mo thu muc chua file .srt va CHON DUNG file do
+        (explorer /select,). File import tay co the nam ngoai thu
+        muc du an nen nut nay khong dung thu muc du an."""
+        p = (job or {}).get("subtitle_file") or ""
+        if not p or not os.path.isfile(p):
+            messagebox.showinfo(
+                "Chưa có phụ đề",
+                "Dự án này chưa có file phụ đề.\n"
+                "Bấm 'Thêm phụ đề' để tự import file .srt ngoài vào.")
+            return
+        if mo_file_trong_explorer(p):
+            return
+        thu_muc = os.path.dirname(p)
+        if thu_muc and os.path.isdir(thu_muc):
+            if not mo_thu_muc(thu_muc):
+                messagebox.showinfo("Đường dẫn phụ đề", p)
+        else:
+            messagebox.showinfo("Đường dẫn phụ đề", p)
 
     def _chon_du_an(self, jid):
         self.job_da_chon_id = jid
-        self._xay_bang_du_an()
+        tree = getattr(self, "tree_du_an", None)
+        if tree is not None and jid and tree.exists(jid):
+            tree.selection_set(jid)
+            tree.see(jid)
+        self._hien_chi_tiet_du_an(self._lay_job_da_chon())
+        self._cap_nhat_nut_hanh_dong()
 
     def _mo_thu_muc_du_an(self, job):
         folder = (job or {}).get("folder") or (job or {}).get("outdir") or ""

@@ -6,8 +6,8 @@
 ; va chipchipdownload.ico o cung thu muc repo).
 
 #define MyAppName "Chipchipdownload"
-#define MyAppVersion "7.5"
-#define MyAppPublisher "Gà Con cho CYAN"
+#define MyAppVersion "7.6"
+ #define MyAppPublisher "Gà Con cho CYAN"
 #define MyAppExeName "Chipchipdownload.exe"
 
 [Setup]

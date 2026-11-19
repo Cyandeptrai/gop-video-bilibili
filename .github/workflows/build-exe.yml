@@ -17,10 +17,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install PyInstaller
-        run: pip install pyinstaller comtypes edge-tts pydub pillow
+        run: pip install pyinstaller comtypes edge-tts pydub pillow pywebview
 
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --name "Chipchipdownload" --icon chipchipdownload.ico --hidden-import=edge_tts --hidden-import=edge_tts.communicate --hidden-import=aiohttp --hidden-import=certifi --hidden-import=pydub Gop-Video-Bilibili-GUI.py
+        run: pyinstaller --onefile --windowed --name "Chipchipdownload" --icon chipchipdownload.ico --hidden-import=edge_tts --hidden-import=edge_tts.communicate --hidden-import=aiohttp --hidden-import=certifi --hidden-import=pydub --collect-all webview Gop-Video-Bilibili-GUI.py
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4

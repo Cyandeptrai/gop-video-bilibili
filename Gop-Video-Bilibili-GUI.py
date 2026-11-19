@@ -158,6 +158,24 @@ sang IDM doi ten _tieng.m4a -> _tieng.mp4 (stream tieng thuc
 chat la container mp4, server tra MIME video/mp4 nen IDM het
 hoi doi ten); nhan dien cap van phan biet bang ffprobe (file
 nao co luong video) nen 2 file .mp4 khong lan nhau.
+v7.7 (VIET LAI XUAT MP3 HOAIMY - CYAN 19/11): sua loi bam XUAT MP3
+thi cho mai, trang thai dung o "Chưa chạy." (luong worker chet im
+ngay tai `from pydub import AudioSegment` dau ham _chay vi ban exe
+thieu pydub, khong try/except nen khong bao loi, khong mo khoa nut).
+Toan bo luong _chay co try/except + log loi ro + mo khoa nut + hop
+thoai loi; trang thai doi "Đang khởi động..." ngay khi bam XUAT.
+BO GopDan-WAV-tam (file WAV tam to bang tong thoi luong phim, ffmpeg
+chuyen co timeout cung 600s, loi khong ghi ly do): moi cau doc xong
+luu file MP3 rieng trong tung-cau nhu cu, gop cuoi bang ffmpeg
+concat demuxer (file tung cau xen ke file im lang dung moc gio SRT,
+cat bang outpoint khi tran slot), thu -c copy truoc, loi thi thu lai
+re-encode, kiem tra do dai file ra bang ffprobe; loi ffmpeg ghi day
+du vao ffmpeg-loi.log. Edge TTS co timeout 120s/cau (asyncio.
+wait_for), het gio thi failover luot sau; nut Huy dung duoc that
+sau cau dang doc. Duong dan dai Windows: thao tac file cua Python
+dung tien to \\\\?\\ khi can, ffmpeg thi khong (ffmpeg co the khong
+hieu). Khong doi giao dien, ten file ra, tien-trinh.json, che do
+Gop/Tung cau rieng/Ca hai.
 
 Luồng chính (dán link -> tải bằng IDM -> tự gộp -> xem):
 1. Tải video từ Bilibili bằng yt-dlp: dán link, chọn chất lượng, tải về rồi
@@ -203,7 +221,21 @@ from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 # Cap nhat. Chi co 1 luong cap nhat duy nhat (cua ChipChip).
 APP_TITLE = "Chipchipdownload"
 STUDIO_TITLE = "ChipChipStudio"
-VERSION = "7.6"
+VERSION = "7.7"
+# (v7.7) GHI CHU BUILD EXE (PyInstaller) CHO CHUC NANG XUAT MP3
+# HOAIMY — de khong lap lai loi v7.5 "bam XUAT thi chet im vi ban
+# exe thieu thu vien": luong xuat MP3 chi import luoi (lazy import)
+# cac thu vien sau, PyInstaller KHONG tu thay duoc vi chung khong
+# nam o import dau file, nen build PHai khai bao hidden import:
+#   edge_tts, edge_tts.communicate, aiohttp, certifi
+# (vd: pyinstaller --hidden-import=edge_tts
+#  --hidden-import=edge_tts.communicate --hidden-import=aiohttp
+#  --hidden-import=certifi ...; hoac khai trong file .spec).
+# pydub KHONG con can cho xuat MP3 tu v7.7 (gop bang ffmpeg concat,
+# do thoi luong bang ffprobe); neu build van muon giu pydub cho
+# du phong thi them --hidden-import=pydub --hidden-import=pydub.audio_segment.
+# ffmpeg/ffprobe KHONG dong goi trong exe: tool tu tim ffmpeg.exe/
+# ffprobe o PATH, cung thu muc voi exe, C:\ffmpeg, C:\iContent.
 # (v7.6) Model dich phu de — KHONG hardcode trong ham goi API nua,
 # lay tu config (nguoi dung chon/go o tab Xu ly phu de).
 # Gemini 2.5-flash DA DEPRECATED, tat 01/12/2026: TUYET DOI khong
@@ -2843,6 +2875,11 @@ MAU_DOC_THU = "Xin chào, đây là giọng đọc thử."
 
 
 DO_DAI_TOI_DA_MOT_LAN = 500  # ky tu; cau dai hon se tach nho
+# (v7.7) Gioi han thoi gian cho 1 lan goi Edge TTS (moi doan). Het
+# gio thi failover sang luot sau thay vi treo vo han (asyncio.run
+# khong timeout o v7.5: mang cham/treo thi luong worker dung mai o
+# cau do, trang thai khong doi, nut Huy cung khong dung duoc).
+THOI_GIAN_TOI_DA_DOC_MOT_DOAN_GIAY = 120
 
 
 _TS_RE = re.compile(
@@ -2866,9 +2903,31 @@ def _dinh_dang_ms(ms):
     return "%02d:%02d:%02d,%03d" % (h, m, s, mmm)
 
 
+def _duong_dan_dai_win(path):
+    """(v7.7) Tra ve duong dan dung duoc tren Windows khi duong dan
+    DAI (gan/vuot gioi han 260 ky tu cua Windows - thu muc phim +
+    ten file SRT cua CYAN rat dai): them tien to \\\\?\\ vao duong
+    dan tuyet doi. CHI dung cho cac thao tac file cua Python
+    (open/makedirs/stat/isfile); KHONG dung cho doi so dong lenh
+    ffmpeg/ffprobe (ffmpeg co the khong hieu tien to nay). Ngoai
+    Windows, hoac duong dan ngan, tra nguyen path."""
+    if not path or sys.platform != "win32":
+        return path
+    try:
+        p = os.path.abspath(str(path))
+    except Exception:
+        return path
+    if p.startswith("\\\\?\\") or p.startswith("\\\\"):
+        return p
+    if len(p) > 240:
+        return "\\\\?\\" + p
+    return path
+
+
 def doc_srt(duong_dan):
     """Tra ve list dict: {chi_so, bat_dau_ms, ket_thuc_ms, text}."""
-    with open(duong_dan, "r", encoding="utf-8-sig", errors="replace") as f:
+    with open(_duong_dan_dai_win(duong_dan), "r",
+              encoding="utf-8-sig", errors="replace") as f:
         noi_dung = f.read()
     noi_dung = noi_dung.replace("\r\n", "\n").replace("\r", "\n")
     khoi = [k.strip("\n") for k in re.split(r"\n\s*\n", noi_dung) if k.strip()]
@@ -2959,8 +3018,9 @@ def _ghi_log_loi_ffmpeg(thu_muc, noi_dung):
     """Ghi log loi ffmpeg DAY DU vao file ffmpeg-loi.log trong thu muc ket
     qua (de chan doan sau), thay vi hien toan bo len man hinh (v1.3)."""
     try:
-        os.makedirs(thu_muc, exist_ok=True)
-        with open(os.path.join(thu_muc, "ffmpeg-loi.log"), "a",
+        os.makedirs(_duong_dan_dai_win(thu_muc), exist_ok=True)
+        with open(_duong_dan_dai_win(
+                os.path.join(thu_muc, "ffmpeg-loi.log")), "a",
                   encoding="utf-8") as f:
             f.write("\n--- %s ---\n%s\n"
                     % (time.strftime("%Y-%m-%d %H:%M:%S"), noi_dung))
@@ -3074,10 +3134,12 @@ def _chuyen_sang_may_chu_phu(log_cb=None):
     return True
 
 
-def _mo_ta_loi_giong(e):
+def _mo_ta_loi_giong(e, timeout_giay=None):
     """Phan loai loi doc giong de log ro rang.
     Tra ve (ma, giai_thich). Ma: '403' | '429' | 'khong-co-audio' |
-    'ssl' | 'mang' | 'khac'."""
+    'ssl' | 'mang' | 'khac'. (v7.7) `timeout_giay`: so giay timeout
+    thuc te cua luot goi (de bao dung so, khong lay nham hang so
+    mac dinh 120s khi test/goi voi timeout khac)."""
     ten = type(e).__name__
     s = str(e)
     status = getattr(e, "status", None)
@@ -3093,13 +3155,25 @@ def _mo_ta_loi_giong(e):
     if la_loi_chung_chi_ssl(e):
         return ("ssl", "loi chung chi SSL - proxy/phan mem diet virus chan "
                        "chung chi")
+    # (v7.7) Timeout cua asyncio.wait_for: str(e) rong nen phai bat
+    # theo kieu exception, khong chi theo chuoi.
+    if isinstance(e, TimeoutError) or ten in ("TimeoutError",):
+        so_giay = timeout_giay if timeout_giay else \
+            THOI_GIAN_TOI_DA_DOC_MOT_DOAN_GIAY
+        return ("mang", "hết thời gian chờ %ds - mạng chậm hoặc máy chủ "
+                         "giọng không phản hồi, sẽ thử lượt sau"
+                % so_giay)
     if "timeout" in s.lower() or "timed out" in s.lower():
         return ("mang", "het thoi gian cho - mang cham hoac may chu tre")
     return ("khac", "%s: %s" % (ten, s))
 
 
 async def _doc_mot_doan(text, voice, toc_do, cao_do, duong_dan_ra,
-                        bo_xac_minh, proxy=None):
+                        bo_xac_minh, proxy=None,
+                        timeout_giay=THOI_GIAN_TOI_DA_DOC_MOT_DOAN_GIAY):
+    # (v7.7) edge-tts import luoi o day: ban exe thieu edge_tts thi
+    # ImportError nay duoc bat o _doc_mot_doan_co_failover (co log ro),
+    # khong chet im nhu loi pydub o _chay v7.5.
     import edge_tts
     import edge_tts.communicate as _comm
     # edge-tts truyen thang ssl=_SSL_CTX (certifi) vao ws_connect, ghi de
@@ -3124,16 +3198,24 @@ async def _doc_mot_doan(text, voice, toc_do, cao_do, duong_dan_ra,
         connector=_tao_connector(bo_xac_minh),
         proxy=proxy,
     )
-    await comm.save(duong_dan_ra)
+    # (v7.7) Gioi han thoi gian cho: het gio thi huy luot goi nay
+    # (asyncio.TimeoutError) de failover sang luot sau, khong treo
+    # vo han khi mang cham/may chu giong treo.
+    await asyncio.wait_for(comm.save(duong_dan_ra),
+                           timeout=max(10, float(timeout_giay)))
 
 
 def _doc_mot_doan_co_failover(text, voice, toc_do, cao_do, duong_dan_ra,
-                              log_cb=None):
+                              log_cb=None,
+                              timeout_giay=THOI_GIAN_TOI_DA_DOC_MOT_DOAN_GIAY,
+                              dung=None):
     """Doc 1 doan ngan thanh file MP3, co failover may chu giong.
     Thu tu: may chu goc (SSL xac minh -> bo xac minh) roi may chu phu
     api.msedgeservices.com (SSL xac minh -> bo xac minh). Gap 429 thi
     doi 3 giay truoc khi thu lai. Tra ve (thanh_cong, da_dung_bo_xac_minh,
-    thong_bao_loi)."""
+    thong_bao_loi). (v7.7) Moi luot goi co timeout rieng; `dung`
+    (threading.Event, tuy chon) de nut Huy dung duoc ngay ca khi dang
+    cho giong, khong phai doi het 4 luot."""
     import time
     proxy = _lay_proxy_he_thong()
     if proxy and log_cb:
@@ -3145,6 +3227,8 @@ def _doc_mot_doan_co_failover(text, voice, toc_do, cao_do, duong_dan_ra,
                     ("phu", False), ("phu", True)]
     loi_cuoi = ""
     for i, (may_chu, bo_xac_minh) in enumerate(cac_luot, 1):
+        if dung is not None and dung.is_set():
+            return False, False, "đã hủy"
         if may_chu == "phu":
             _chuyen_sang_may_chu_phu(log_cb)
             if i == 3:
@@ -3152,15 +3236,40 @@ def _doc_mot_doan_co_failover(text, voice, toc_do, cao_do, duong_dan_ra,
         ten_may = ("may chu goc" if may_chu == "goc"
                    else "may chu phu")
         try:
+            # (v7.7) Xoa file dich cua luot truoc (neu co): luot truoc
+            # timeout/loi giua chung co the de lai file MP3 doan, neu
+            # khong xoa thi buoc kiem tra "file > 0 byte" ben duoi se
+            # nhan nham file doan do la thanh cong.
+            _xoa_file_quiet(duong_dan_ra)
             asyncio.run(_doc_mot_doan(text, voice, toc_do, cao_do,
-                                      duong_dan_ra, bo_xac_minh, proxy))
+                                      duong_dan_ra, bo_xac_minh, proxy,
+                                      timeout_giay=timeout_giay))
             if os.path.isfile(duong_dan_ra) and os.path.getsize(duong_dan_ra) > 0:
                 if log_cb and may_chu == "phu":
                     log_cb("  OK qua may chu phu api.msedgeservices.com")
                 return True, bo_xac_minh, ""
             raise RuntimeError("file am thanh rong (0 byte)")
+        except ImportError as e:
+            # (v7.7) Thieu thu vien trong ban exe: bao ro TEN thu
+            # vien thieu ngay, khong thu 4 luot vo ich. (edge_tts
+            # hay aiohttp deu la hidden import khi build exe.)
+            ten_thieu = str(e)
+            if "edge_tts" in ten_thieu:
+                loi = ("thiếu thư viện edge-tts trong bản exe "
+                       "(lỗi build: thiếu hidden import edge_tts) - %s"
+                       % e)
+            elif "aiohttp" in ten_thieu:
+                loi = ("thiếu thư viện aiohttp trong bản exe "
+                       "(lỗi build: thiếu hidden import aiohttp) - %s"
+                       % e)
+            else:
+                loi = "thiếu thư viện trong bản exe: %s" % e
+            if log_cb:
+                log_cb("  LỖI: %s" % loi)
+            return False, False, loi
         except Exception as e:
-            ma, giai_thich = _mo_ta_loi_giong(e)
+            ma, giai_thich = _mo_ta_loi_giong(e,
+                                              timeout_giay=timeout_giay)
             loi_cuoi = "%s [%s]" % (giai_thich, ma)
             if log_cb:
                 log_cb("  Thu lan %d/%d (%s, %s) loi [%s]: %s"
@@ -3173,41 +3282,61 @@ def _doc_mot_doan_co_failover(text, voice, toc_do, cao_do, duong_dan_ra,
     return False, False, loi_cuoi
 
 
-def doc_thanh_mp3(text, voice, toc_do, cao_do, duong_dan_ra, log_cb=None):
+def doc_thanh_mp3(text, voice, toc_do, cao_do, duong_dan_ra, log_cb=None,
+                  ffmpeg=None,
+                  timeout_giay=THOI_GIAN_TOI_DA_DOC_MOT_DOAN_GIAY,
+                  dung=None):
     """Doc 1 cau thanh file MP3 (co failover may chu giong, xem
     _doc_mot_doan_co_failover). toc_do la HE SO NHAN (v1.3: 1.0x mac
     dinh, 0.5x-2.0x) - doi sang dang '+35%' trong _doc_mot_doan truoc
     khi dua cho edge-tts. Tra ve (thanh_cong, da_dung_bo_xac_minh,
     thong_bao_loi). v1.3: doc loi thi XOA file dich (neu co) de khong de
-    lai file MP3 hong (0 byte / doan giua chung) lam hong buoc gop sau."""
+    lai file MP3 hong (0 byte / doan giua chung) lam hong buoc gop sau.
+    (v7.7) Cau dai: doc tung doan roi noi lai bang ffmpeg concat
+    demuxer (_gop_mp3_concat), KHONG dung pydub nua (pydub la
+    nguyen nhan nghi ngo gay chet im luong _chay o v7.5 vi ban exe
+    thieu thu vien nay)."""
     doan_list = tach_cau_dai(text)
     if len(doan_list) == 1:
         ok, bo_xac_minh, loi = _doc_mot_doan_co_failover(
-            text, voice, toc_do, cao_do, duong_dan_ra, log_cb)
+            text, voice, toc_do, cao_do, duong_dan_ra, log_cb,
+            timeout_giay=timeout_giay, dung=dung)
         if not ok:
             _xoa_file_quiet(duong_dan_ra)
         return ok, bo_xac_minh, loi
-    # Cau dai: doc tung doan roi noi lai bang pydub
+    # Cau dai: doc tung doan roi noi lai bang ffmpeg concat.
+    if not ffmpeg:
+        return False, False, ("câu dài cần ffmpeg để nối các đoạn "
+                              "(đặt ffmpeg.exe cạnh tool hoặc thêm vào "
+                              "PATH)")
     import tempfile
-    from pydub import AudioSegment
-    am_thanh = AudioSegment.empty()
-    for j, doan in enumerate(doan_list):
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tam_path = tmp.name
-        ok, _, loi = doc_thanh_mp3(doan, voice, toc_do, cao_do, tam_path, log_cb)
-        try:
-            if ok:
-                am_thanh += AudioSegment.from_file(tam_path, format="mp3")
-            else:
+    tam_files = []
+    try:
+        for j, doan in enumerate(doan_list):
+            if dung is not None and dung.is_set():
+                _xoa_file_quiet(duong_dan_ra)
+                return False, False, "đã hủy"
+            with tempfile.NamedTemporaryFile(suffix=".mp3",
+                                            delete=False) as tmp:
+                tam_path = tmp.name
+            tam_files.append(tam_path)
+            ok, _, loi = doc_thanh_mp3(doan, voice, toc_do, cao_do,
+                                       tam_path, log_cb, ffmpeg=ffmpeg,
+                                       timeout_giay=timeout_giay, dung=dung)
+            if not ok:
                 _xoa_file_quiet(duong_dan_ra)
                 return False, False, "doan %d loi: %s" % (j + 1, loi)
-        finally:
-            try:
-                os.remove(tam_path)
-            except OSError:
-                pass
-    am_thanh.export(duong_dan_ra, format="mp3")
-    return True, False, ""
+        ok_gop, loi_gop = _gop_mp3_concat(
+            [(p, None) for p in tam_files], duong_dan_ra, ffmpeg,
+            log_cb=log_cb, dung=dung, timeout_giay=180,
+            log_loi_dir=os.path.dirname(duong_dan_ra) or ".")
+        if not ok_gop:
+            _xoa_file_quiet(duong_dan_ra)
+            return False, False, "nối các đoạn lỗi: %s" % loi_gop
+        return True, False, ""
+    finally:
+        for p in tam_files:
+            _xoa_file_quiet(p)
 
 
 def _ps_quote(s):
@@ -3389,36 +3518,50 @@ def doc_giong_may(text, toc_do, cao_do, duong_dan_ra, log_cb=None,
     if len(doan_list) == 1:
         return _doc_giong_may_1_doan(text, toc_do, cao_do, duong_dan_ra,
                                      log_cb, ffmpeg)
-    from pydub import AudioSegment
-    am_thanh = AudioSegment.empty()
-    for j, doan in enumerate(doan_list):
-        with tempfile.NamedTemporaryFile(suffix=".mp3",
-                                         delete=False) as tmp:
-            tam_path = tmp.name
-        ok, _, loi = _doc_giong_may_1_doan(doan, toc_do, cao_do, tam_path,
-                                           log_cb, ffmpeg)
-        try:
-            if ok:
-                am_thanh += AudioSegment.from_file(tam_path, format="mp3")
-            else:
+    # (v7.7) Cau dai: doc tung doan roi noi lai bang ffmpeg concat
+    # demuxer, KHONG dung pydub nua (xem doc_thanh_mp3).
+    import tempfile
+    tam_files = []
+    try:
+        for j, doan in enumerate(doan_list):
+            with tempfile.NamedTemporaryFile(suffix=".mp3",
+                                             delete=False) as tmp:
+                tam_path = tmp.name
+            tam_files.append(tam_path)
+            ok, _, loi = _doc_giong_may_1_doan(doan, toc_do, cao_do,
+                                               tam_path, log_cb, ffmpeg)
+            if not ok:
                 _xoa_file_quiet(duong_dan_ra)
                 return False, False, "doan %d loi: %s" % (j + 1, loi)
-        finally:
-            _xoa_file_quiet(tam_path)
-    am_thanh.export(duong_dan_ra, format="mp3")
-    return True, False, ""
+        ok_gop, loi_gop = _gop_mp3_concat(
+            [(p, None) for p in tam_files], duong_dan_ra, ffmpeg,
+            log_cb=log_cb, timeout_giay=180,
+            log_loi_dir=os.path.dirname(duong_dan_ra) or ".")
+        if not ok_gop:
+            _xoa_file_quiet(duong_dan_ra)
+            return False, False, "nối các đoạn lỗi: %s" % loi_gop
+        return True, False, ""
+    finally:
+        for p in tam_files:
+            _xoa_file_quiet(p)
 
 
 def doc_cau_thanh_mp3(text, voice, toc_do, cao_do, duong_dan_ra,
-                      log_cb=None, ffmpeg=None):
+                      log_cb=None, ffmpeg=None,
+                      timeout_giay=THOI_GIAN_TOI_DA_DOC_MOT_DOAN_GIAY,
+                      dung=None):
     """Doc 1 cau thanh file MP3, chon duong giong theo `voice`:
     'may' -> giong SAPI tren may Windows (PowerShell System.Speech);
     con lai -> Edge TTS online (HoaiMy/NamMinh).
-    Tra ve (thanh_cong, da_dung_bo_xac_minh, thong_bao_loi)."""
+    Tra ve (thanh_cong, da_dung_bo_xac_minh, thong_bao_loi).
+    (v7.7) `dung` (threading.Event) de nut Huy dung duoc ngay ca
+    khi dang cho giong; `timeout_giay` gioi han moi lan goi giong."""
     if voice == "may":
         return doc_giong_may(text, toc_do, cao_do, duong_dan_ra, log_cb,
                              ffmpeg)
-    return doc_thanh_mp3(text, voice, toc_do, cao_do, duong_dan_ra, log_cb)
+    return doc_thanh_mp3(text, voice, toc_do, cao_do, duong_dan_ra,
+                         log_cb, ffmpeg=ffmpeg,
+                         timeout_giay=timeout_giay, dung=dung)
 
 
 TOC_DO_DOC_TRUNG_BINH_KY_TU_GIAY = 13.5  # toc do doc trung binh tieng
@@ -3439,9 +3582,11 @@ def _uoc_luong_thoi_luong_ms(text, toc_do=1.0):
 
 
 def _do_dai_mp3_ms(duong_dan, ffmpeg):
-    """Do thoi luong file MP3 (ms). Uu tien ffprobe (nhanh, chinh xac);
-    neu khong co thi dung pydub. Tra ve None neu khong do duoc
-    (vd: thieu ffmpeg, file loi)."""
+    """Do thoi luong file MP3 (ms). Chi dung ffprobe (nhanh, chinh
+    xac). (v7.7) BO fallback pydub: ban exe thieu pydub thi fallback
+    nay chet im/khong do duoc; khong do duoc thi tra None de ben goi
+    uoc luong tu do dai van ban (xem _ap_dung_toc_do_tu_dong).
+    Tra ve None neu khong do duoc (vd: thieu ffmpeg, file loi)."""
     if not os.path.isfile(duong_dan):
         return None
     try:
@@ -3461,11 +3606,7 @@ def _do_dai_mp3_ms(duong_dan, ffmpeg):
                 return int(float(r.stdout.strip()) * 1000)
         except Exception:
             pass
-    try:
-        from pydub import AudioSegment
-        return len(AudioSegment.from_file(duong_dan, format="mp3"))
-    except Exception:
-        return None
+    return None
 
 
 def _tinh_toc_do_can(slot_ms, do_dai_ms, toc_do_co_ban, toc_do_toi_da):
@@ -3544,7 +3685,7 @@ def _ap_dung_toc_do_tu_dong(duong_dan, cau, toc_do_co_ban, toc_do_toi_da,
     """Ap dung toc do tu dong theo slot SRT cho 1 cau vua doc xong.
     Tra ve toc_do_thuc_te (he so nhan) cua cau do.
     - Tat tu_dong: tra ve toc_do_co_ban, khong lam gi (hanh vi cu v1.3).
-    - Do thoi luong that cua file (ffprobe/pydub); khong do duoc thi
+    - Do thoi luong that cua file (ffprobe); khong do duoc thi
       uoc luong tu do dai van ban.
     - Can nhanh hon thi dung ffmpeg atempo tang toc file tai cho.
     - Khong kip du o toc do toi da (hoac khong tang toc duoc) thi ghi
@@ -3658,154 +3799,364 @@ def _phat_mp3(path, dung=None):
         return False, "không phát được audio trên hệ này: %s" % e
 
 
-class GopDan:
-    """Gop dan (merge incremental) cho che do 'Gop 1 file long tieng'
-    (v1.3): moi cau doc xong la ghep NGAY vao file WAV tam, dung moc
-    thoi gian SRT cua no (ghi PCM truc tiep vao dung vi tri, cho chua
-    toi thi de lang). Khong doi den cuoi moi gop 1 lan nhu truoc.
-    Loi ich: huy giua chung hay loi giua chung thi file tam van giu
-    cac cau da xong (khong mat trang); 1 cau loi khong lam hong ca
-    file gop (chi de lang o slot cua no roi di tiep); mo file tam ra
-    nghe thu duoc ngay ca khi chua chay xong. Xong thi chuyen WAV tam
-    -> MP3 1 lan bang ffmpeg, roi xoa file tam.
-    Vi sao phai doc tung cau rieng roi moi gop: API giong Microsoft
-    (edge-tts) chi nhan 1 doan van moi lan goi - khong goi 1 lan cho
-    ca 100 cau duoc - nen tool doc tung cau rieng roi ghep lai dung
-    moc thoi gian SRT thanh 1 file long tieng duy nhat."""
+def _ffprobe_thong_so_audio(duong_dan, ffmpeg):
+    """(v7.7) Do (sample_rate, channels) cua 1 file audio qua ffprobe
+    (de tao file im lang cung thong so khi gop). Tra ve None neu
+    khong do duoc."""
+    ffprobe = tim_ffprobe(ffmpeg) if ffmpeg else None
+    if not ffprobe:
+        return None
+    try:
+        r = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=sample_rate,channels",
+             "-of", "json", duong_dan],
+            capture_output=True, text=True, timeout=30)
+        if r.returncode == 0 and r.stdout.strip():
+            data = json.loads(r.stdout)
+            streams = data.get("streams") or []
+            if streams:
+                sr = int(streams[0].get("sample_rate") or 0)
+                ch = int(streams[0].get("channels") or 0)
+                if sr > 0 and ch > 0:
+                    return sr, ch
+    except Exception:
+        pass
+    return None
 
-    def __init__(self, duong_dan_wav, duong_dan_mp3, tong_ms=0, log_cb=None):
-        self.wav = duong_dan_wav
+
+def _tao_file_im_lang_1s(ffmpeg, thu_muc, sample_rate=24000, channels=1):
+    """(v7.7) Tao file im lang 1 giay (MP3) cung thong so audio voi
+    file cau, de lam khoang lang trong danh sach concat. File duoc
+    tao 1 lan roi dung lai. Tra ve duong dan hoac None neu tao
+    khong duoc."""
+    ten = "_im-lang-1s-%d-%d.mp3" % (sample_rate, channels)
+    dich = os.path.join(thu_muc, ten)
+    try:
+        if os.path.isfile(dich) and os.path.getsize(dich) > 0:
+            return dich
+    except OSError:
+        pass
+    layout = "mono" if channels <= 1 else "stereo"
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-y", "-f", "lavfi", "-i",
+             "anullsrc=channel_layout=%s:sample_rate=%d"
+             % (layout, sample_rate),
+             "-t", "1", "-b:a", "128k", dich],
+            capture_output=True, timeout=60)
+        if (r.returncode == 0 and os.path.isfile(dich)
+                and os.path.getsize(dich) > 0):
+            return dich
+    except Exception:
+        pass
+    return None
+
+
+def _them_doan_im_lang(danh_sach, gap_ms, file_im_lang):
+    """(v7.7) Them khoang lang gap_ms vao danh sach concat: lap lai
+    file im lang 1s (phan du < 1s thi cat bang outpoint)."""
+    con = max(0, int(gap_ms))
+    while con >= 1000:
+        danh_sach.append((file_im_lang, None))
+        con -= 1000
+    if con >= 50:
+        danh_sach.append((file_im_lang, con / 1000.0))
+
+
+def _chay_ffmpeg_co_gioi_han(cmd, timeout_giay, dung=None, log_cb=None,
+                            nhan="ffmpeg"):
+    """(v7.7) Chay ffmpeg, vua chay vua kiem tra nut Huy (dung) va
+    het gio. Tra ve (returncode, stderr_text). Het gio thi kill va
+    raise TimeoutError; bam Huy thi kill va tra (-1, "đã hủy")."""
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+        **chay_ngam_kwargs())
+    bat_dau = time.monotonic()
+    da_log = 0
+    while True:
+        try:
+            _, err = proc.communicate(timeout=5)
+            return proc.returncode, err or ""
+        except subprocess.TimeoutExpired:
+            pass
+        if dung is not None and dung.is_set():
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                proc.communicate()
+            except Exception:
+                pass
+            return -1, "đã hủy"
+        da_cho = time.monotonic() - bat_dau
+        if timeout_giay and da_cho > timeout_giay:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                proc.communicate()
+            except Exception:
+                pass
+            raise TimeoutError("%s chạy quá %ds"
+                               % (nhan, int(timeout_giay)))
+        if log_cb and da_cho - da_log >= 60:
+            da_log = da_cho
+            log_cb("  (%s đang chạy... đã chờ %ds)"
+                   % (nhan, int(da_cho)))
+
+
+def _gop_mp3_concat(danh_sach_doan, dich, ffmpeg, log_cb=None, dung=None,
+                    timeout_giay=None, log_loi_dir=None,
+                    do_dai_mong_doi_ms=None):
+    """(v7.7) Gop cac file MP3 thanh 1 file bang ffmpeg concat demuxer.
+    danh_sach_doan: list (duong_dan, outpoint_giay_hoac_None) —
+    outpoint de cat file khi audio dai hon slot SRT cua no; None thi
+    lay het file. Thu -c copy truoc (nhanh, khong re-encode); loi thi
+    thu lai re-encode libmp3lame; xong kiem tra do dai file ra bang
+    ffprobe neu co do_dai_mong_doi_ms. Loi day du ghi vao
+    ffmpeg-loi.log trong log_loi_dir. Tra ve (True, "") hoac
+    (False, loi_ngan).
+    LUU Y (da kiem chung tren ffmpeg 8.1): chi thi `duration` cua
+    concat demuxer KHONG duoc dung o day — no bi bo qua hoan toan
+    (file van lay het do dai that). Muon dung khoang lang/slot thi
+    dung file im lang co do dai that + outpoint de cat."""
+    if not ffmpeg:
+        return False, "không tìm thấy ffmpeg"
+    if not danh_sach_doan:
+        return False, "không có đoạn nào để gộp"
+    thu_muc_txt = os.path.dirname(dich) or "."
+    txt_path = os.path.join(thu_muc_txt, "_gop-danh-sach.txt")
+    try:
+        with open(txt_path, "w", encoding="utf-8") as f:
+            for duong_dan, outpoint in danh_sach_doan:
+                f.write("file '%s'\n"
+                        % str(duong_dan).replace("'", "'\\''"))
+                if outpoint is not None and float(outpoint) > 0:
+                    f.write("outpoint %.3f\n" % float(outpoint))
+    except OSError as e:
+        return False, "không ghi được danh sách gộp: %s" % e
+    stderr_day_du = ""
+    for che_do in ("copy", "re-encode"):
+        if che_do == "copy":
+            cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0",
+                   "-i", txt_path, "-c", "copy", dich]
+        else:
+            cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0",
+                   "-i", txt_path, "-c:a", "libmp3lame", "-b:a", "128k",
+                   dich]
+        try:
+            rc, err = _chay_ffmpeg_co_gioi_han(
+                cmd, timeout_giay, dung=dung, log_cb=log_cb,
+                nhan="gộp MP3 (%s)" % che_do)
+        except TimeoutError as e:
+            if log_loi_dir:
+                _ghi_log_loi_ffmpeg(
+                    log_loi_dir, "gop MP3 %s timeout: %s" % (che_do, e))
+            return False, "gộp MP3 hết thời gian chờ (%s)" % che_do
+        stderr_day_du = err
+        if rc == -1:
+            return False, "đã hủy khi đang gộp MP3"
+        if rc == 0 and os.path.isfile(dich) and os.path.getsize(dich) > 0:
+            if do_dai_mong_doi_ms:
+                do_dai = _do_dai_mp3_ms(dich, ffmpeg)
+                if (do_dai is not None
+                        and abs(do_dai - do_dai_mong_doi_ms)
+                        > max(2000, do_dai_mong_doi_ms // 50)):
+                    if log_cb:
+                        log_cb("  (gộp MP3 %s: file ra dài %.1fs, lệch "
+                               "%.1fs so với mong đợi %.1fs — thử lại "
+                               "bằng re-encode)"
+                               % (che_do, do_dai / 1000.0,
+                                  abs(do_dai - do_dai_mong_doi_ms)
+                                  / 1000.0,
+                                  do_dai_mong_doi_ms / 1000.0))
+                    if che_do == "copy":
+                        continue
+                    return False, ("file gộp dài %.1fs, lệch nhiều so "
+                                   "với %.1fs mong đợi"
+                                   % (do_dai / 1000.0,
+                                      do_dai_mong_doi_ms / 1000.0))
+            return True, ""
+        if log_cb:
+            if che_do == "copy":
+                log_cb("  (gộp MP3 copy lỗi, mã %s — thử lại bằng "
+                       "re-encode)" % rc)
+            else:
+                log_cb("  (gộp MP3 re-encode lỗi, mã %s)" % rc)
+    if log_loi_dir:
+        _ghi_log_loi_ffmpeg(
+            log_loi_dir,
+            "gop MP3 that bai (copy + re-encode):\n%s" % stderr_day_du)
+    return False, "ffmpeg gộp MP3 lỗi (xem chi tiết trong ffmpeg-loi.log)"
+
+
+class GopDan:
+    """Gop MP3 theo moc thoi gian SRT bang ffmpeg concat demuxer
+    (v7.7, VIET LAI — thay GopDan-WAV-tam cua v1.3/v7.5).
+    Moi cau doc xong chi luu file MP3 rieng trong tung-cau (nhu tool
+    cu da lam duoc); toi buoc hoan tat moi gop 1 lan: lap danh sach
+    concat gom file tung cau xen ke file im lang 1s, dung moc gio
+    SRT (cau nao doc dai hon slot thi cat bang outpoint), chay
+    ffmpeg concat (thu -c copy, loi thi re-encode), kiem tra do dai
+    file ra bang ffprobe.
+    Loi ich so voi ban cu: khong con file WAV tam to bang tong thoi
+    luong phim (voi 8156s thi vai tram MB den >1GB, truncate co the
+    loi tren duong dan dai/o dia day), khong con timeout cung 600s
+    o buoc chuyen WAV->MP3, loi ffmpeg ghi ro ra ffmpeg-loi.log.
+    API giu nguyen nhu ban cu (them_cau / hoan_tat / so_cau /
+    bo_qua / tran_slot / da_tao / do_dai_ms) de _chay khong phai
+    doi logic goi."""
+
+    def __init__(self, duong_dan_mp3, tong_ms=0, log_cb=None,
+                 ffmpeg=None, thu_muc=None):
         self.mp3 = duong_dan_mp3
         # tong_ms: moc ket thuc cua cau cuoi trong SRT - file gop phai
         # dai du den moc nay (du cau cuoi doc ngan hon slot cua no).
         self.tong_ms = tong_ms
         self.log_cb = log_cb
-        self.frame_rate = None
-        self.channels = None
-        self.sample_width = 2
-        self.block_align = None
-        self.so_cau = 0       # so cau da ghep vao file tam
+        self.ffmpeg = ffmpeg
+        # thu_muc: cho file im lang + danh sach concat tam (mac dinh
+        # la thu muc tung-cau, khong de rac thu muc du an).
+        self.thu_muc = thu_muc or os.path.dirname(duong_dan_mp3) or "."
+        self.danh_sach = []  # list dict {cau, file, do_dai_ms}
+        self.so_cau = 0       # so cau da ghi nhan
         self.bo_qua = 0       # so cau loi da bo qua (khong co audio)
         self.tran_slot = 0    # so cau doc dai hon slot cua no
-        self.da_tao = False   # file WAV tam da duoc tao (co cau dau tien)
-
-    def _ghi_header_vao(self, f, data_size):
-        """Ghi (lai) header WAV 44 byte voi data_size hien tai (f dang mo)."""
-        import struct
-        byte_rate = self.frame_rate * self.block_align
-        header = struct.pack(
-            "<4sI4s4sIHHIIHH4sI",
-            b"RIFF", 36 + data_size, b"WAVE", b"fmt ", 16, 1,
-            self.channels, self.frame_rate, byte_rate, self.block_align,
-            self.sample_width * 8, b"data", data_size)
-        f.seek(0)
-        f.write(header)
-
-    def _khoi_tao(self, am_thanh):
-        """Tao file WAV tam tu audio cua cau dau tien (lay thong so
-        frame_rate/channels/sample_width tu no). File duoc tao du dai
-        tong_ms ngay tu dau (phan chua toi la lang) de mo ra nghe thu
-        duoc ngay ca khi chua chay xong."""
-        self.frame_rate = am_thanh.frame_rate
-        self.channels = am_thanh.channels
-        self.sample_width = am_thanh.sample_width
-        self.block_align = self.channels * self.sample_width
-        data_size = 0
-        if self.tong_ms > 0:
-            data_size = (self.tong_ms * self.frame_rate // 1000
-                         * self.block_align)
-        with open(self.wav, "wb") as f:
-            f.write(b"\x00" * 44)
-            if data_size > 0:
-                # Mo rong file (sparse, khong ghi that) cho du tong_ms.
-                f.truncate(44 + data_size)
-                self._ghi_header_vao(f, data_size)
-        self.da_tao = True
+        self.da_tao = False   # da ghi nhan cau dau tien
 
     def them_cau(self, cau, duong_dan_mp3_cau):
-        """Ghep 1 cau vua doc xong vao file WAV tam, dung moc thoi gian
-        SRT cua no. Cau nao khong co audio (thieu file, file rong, file
-        loi khong giai ma duoc) thi BO QUA - cho cua no giu nguyen
-        khoang lang - cac cau khac van ghep binh thuong. Tra ve True
-        neu ghep duoc, False neu bo qua."""
+        """Ghi nhan 1 cau vua doc xong (KHONG ghep ngay nhu ban cu):
+        kiem tra file audio co that/khong rong, do thoi luong that,
+        dem tran slot. Cau nao khong co audio (thieu file, file rong)
+        thi BO QUA - slot cua no se thanh khoang lang khi gop cuoi -
+        cac cau khac van gop binh thuong. Tra ve True neu ghi nhan
+        duoc, False neu bo qua."""
         try:
-            from pydub import AudioSegment
-            am = AudioSegment.from_file(duong_dan_mp3_cau, format="mp3")
-        except Exception:
+            ok_file = (os.path.isfile(duong_dan_mp3_cau)
+                       and os.path.getsize(duong_dan_mp3_cau) > 0)
+        except OSError:
+            ok_file = False
+        if not ok_file:
             if self.log_cb:
                 self.log_cb("  Đã bỏ qua câu %d (file audio lỗi, không đọc "
                             "được)" % cau["chi_so"])
             self.bo_qua += 1
             return False
-        if len(am) == 0:
-            if self.log_cb:
-                self.log_cb("  Đã bỏ qua câu %d (file audio rỗng, không có "
-                            "audio)" % cau["chi_so"])
-            self.bo_qua += 1
-            return False
-        if not self.da_tao:
-            self._khoi_tao(am)
-        am = (am.set_frame_rate(self.frame_rate)
-                .set_channels(self.channels)
-                .set_sample_width(self.sample_width))
-        dai = len(am)
+        do_dai = _do_dai_mp3_ms(duong_dan_mp3_cau, self.ffmpeg)
+        if do_dai is None:
+            # Khong do duoc (thieu ffprobe): uoc luong tu do dai van
+            # ban, van ghi nhan de gop (sai so nho o moc gio).
+            do_dai = _uoc_luong_thoi_luong_ms(cau["text"], 1.0)
+            if do_dai <= 0:
+                do_dai = cau["ket_thuc_ms"] - cau["bat_dau_ms"]
         cho_trong = cau["ket_thuc_ms"] - cau["bat_dau_ms"]
         # v1.4: dung sai 100ms (padding MP3) - tran it hon thi khong
         # dem la tran slot.
-        if dai > cho_trong + DUNG_SAI_TRAN_SLOT_MS:
+        if do_dai > cho_trong + DUNG_SAI_TRAN_SLOT_MS:
             self.tran_slot += 1
             if self.log_cb:
                 self.log_cb("  Canh bao: cau %d doc het %.1fs nhung slot "
                             "chi co %.1fs (phan tran se bi cat khi cau sau "
-                            "bat dau)" % (cau["chi_so"], dai / 1000.0,
+                            "bat dau)" % (cau["chi_so"], do_dai / 1000.0,
                                          cho_trong / 1000.0))
-        vi_tri = 44 + (cau["bat_dau_ms"] * self.frame_rate // 1000) \
-            * self.block_align
-        du_lieu = am.raw_data
-        with open(self.wav, "r+b") as f:
-            f.seek(vi_tri)
-            f.write(du_lieu)
-            f.seek(0, 2)
-            data_size = f.tell() - 44
-            self._ghi_header_vao(f, data_size)
+        self.danh_sach.append({"cau": cau, "file": duong_dan_mp3_cau,
+                               "do_dai_ms": do_dai})
         self.so_cau += 1
+        self.da_tao = True
         return True
 
     def do_dai_ms(self):
-        """Do dai hien tai cua file WAV tam (ms)."""
-        if not self.da_tao or not os.path.isfile(self.wav):
+        """Do dai du kien cua file gop (ms): moc ket thuc cua cau cuoi
+        trong SRT (tong_ms)."""
+        if not self.da_tao:
             return 0
-        data_size = os.path.getsize(self.wav) - 44
-        if data_size <= 0 or not self.frame_rate or not self.block_align:
-            return 0
-        return int(data_size * 1000 / (self.frame_rate * self.block_align))
+        return self.tong_ms or 0
 
-    def hoan_tat(self, ffmpeg):
-        """Chuyen WAV tam -> MP3 dich, xoa file WAV tam. Tra ve
-        (thanh_cong, do_dai_ms)."""
+    def hoan_tat(self, ffmpeg=None, dung=None):
+        """Gop cac cau da ghi nhan thanh 1 file MP3 duy nhat bang
+        ffmpeg concat demuxer, dung moc thoi gian SRT. Tra ve
+        (thanh_cong, do_dai_ms). `dung` (threading.Event) de nut Huy
+        dung duoc ngay ca khi dang gop."""
+        ffmpeg = ffmpeg or self.ffmpeg
         if not self.da_tao or self.so_cau == 0:
             return False, 0
-        # Dam bao file dai du tong_ms (phong khi file bi ngan hon do
-        # cau cuoi doc ngan hon slot cua no).
-        if self.tong_ms > 0:
-            can_bytes = (self.tong_ms * self.frame_rate // 1000
-                         * self.block_align)
-            if os.path.getsize(self.wav) - 44 < can_bytes:
-                with open(self.wav, "r+b") as f:
-                    f.truncate(44 + can_bytes)
-                    self._ghi_header_vao(f, can_bytes)
-        tong_ms = self.do_dai_ms()
-        try:
-            r = subprocess.run([ffmpeg, "-y", "-i", self.wav,
-                                "-b:a", "128k", self.mp3],
-                               capture_output=True, timeout=600)
-        except Exception:
+        if not ffmpeg:
+            if self.log_cb:
+                self.log_cb("LỖI hoàn tất file gộp: không tìm thấy ffmpeg "
+                            "(cần ffmpeg để gộp MP3).")
             return False, 0
-        if (r.returncode != 0 or not os.path.isfile(self.mp3)
-                or os.path.getsize(self.mp3) == 0):
+        # (v7.7) Don sach file WAV tam cua ban cu neu con sot tu lan
+        # chay v7.5 truoc (ten _long-tieng-tam.wav cung thu muc voi
+        # file gop) de khoi nham voi file moi.
+        if self.mp3.endswith("_long-tieng.mp3"):
+            _xoa_file_quiet(self.mp3[:-len("_long-tieng.mp3")]
+                            + "_long-tieng-tam.wav")
+        # Thong so audio de tao file im lang cung loai voi file cau.
+        sr, ch = 24000, 1
+        thong_so = _ffprobe_thong_so_audio(self.danh_sach[0]["file"],
+                                           ffmpeg)
+        if thong_so:
+            sr, ch = thong_so
+        file_im_lang = _tao_file_im_lang_1s(ffmpeg, self.thu_muc, sr, ch)
+        if file_im_lang is None and self.log_cb:
+            self.log_cb("  (không tạo được file im lặng — các khoảng lặng "
+                        "giữa câu sẽ bị bỏ qua, mốc giờ có thể lệch)")
+        # Xay danh sach concat theo moc gio SRT.
+        cac_cau = sorted(self.danh_sach,
+                         key=lambda d: d["cau"]["bat_dau_ms"])
+        danh_sach_doan = []
+        con_troi = 0  # moc thoi gian hien tai trong file ra (ms)
+        for idx, muc in enumerate(cac_cau):
+            cau = muc["cau"]
+            bat_dau = cau["bat_dau_ms"]
+            # Slot cua cau: toi bat dau cau ke; cau cuoi thi toi ket
+            # thuc cua no.
+            if idx + 1 < len(cac_cau):
+                ket_thuc_slot = cac_cau[idx + 1]["cau"]["bat_dau_ms"]
+            else:
+                ket_thuc_slot = cau["ket_thuc_ms"]
+            slot_ms = max(0, ket_thuc_slot - bat_dau)
+            if bat_dau > con_troi:
+                if file_im_lang:
+                    _them_doan_im_lang(danh_sach_doan,
+                                       bat_dau - con_troi, file_im_lang)
+                con_troi = bat_dau
+            do_dai = muc["do_dai_ms"]
+            if slot_ms > 0 and do_dai > slot_ms + DUNG_SAI_TRAN_SLOT_MS:
+                danh_sach_doan.append((muc["file"], slot_ms / 1000.0))
+                con_troi = max(con_troi, bat_dau + slot_ms)
+            else:
+                danh_sach_doan.append((muc["file"], None))
+                con_troi = max(con_troi, bat_dau + do_dai)
+        # Dem khoang lang cuoi cho du tong thoi luong phim.
+        if self.tong_ms > con_troi and file_im_lang:
+            _them_doan_im_lang(danh_sach_doan,
+                               self.tong_ms - con_troi, file_im_lang)
+            con_troi = self.tong_ms
+        if self.log_cb:
+            self.log_cb("Đang gộp %d câu thành 1 file MP3 (ffmpeg "
+                        "concat, đúng mốc giờ SRT)..." % self.so_cau)
+        # (v7.7) Timeout ti le voi tong thoi luong phim (toi thieu
+        # 600s), khong con timeout cung 600s cho moi phim nhu ban cu.
+        timeout_giay = max(600, self.tong_ms // 1000 + 600)
+        ok, loi = _gop_mp3_concat(
+            danh_sach_doan, self.mp3, ffmpeg, log_cb=self.log_cb,
+            dung=dung, timeout_giay=timeout_giay,
+            log_loi_dir=os.path.dirname(self.mp3) or ".",
+            do_dai_mong_doi_ms=self.tong_ms if self.tong_ms > 0 else None)
+        if not ok:
+            if self.log_cb:
+                self.log_cb("LỖI hoàn tất file gộp: %s (xem chi tiết "
+                            "trong file ffmpeg-loi.log ở thư mục kết "
+                            "quả)." % loi)
             return False, 0
-        _xoa_file_quiet(self.wav)
-        return True, tong_ms
+        do_dai_ra = _do_dai_mp3_ms(self.mp3, ffmpeg)
+        return True, (do_dai_ra if do_dai_ra is not None
+                      else self.do_dai_ms())
 
 
 TEN_FILE_TIEN_TRINH = "tien-trinh.json"
@@ -3814,8 +4165,9 @@ TEN_FILE_TIEN_TRINH = "tien-trinh.json"
 def _luu_tien_trinh(thu_muc, du_lieu):
     """Ghi tien trinh xuat dang do vao thu_muc/tien-trinh.json."""
     try:
-        os.makedirs(thu_muc, exist_ok=True)
-        with open(os.path.join(thu_muc, TEN_FILE_TIEN_TRINH), "w",
+        os.makedirs(_duong_dan_dai_win(thu_muc), exist_ok=True)
+        with open(_duong_dan_dai_win(
+                os.path.join(thu_muc, TEN_FILE_TIEN_TRINH)), "w",
                   encoding="utf-8") as f:
             json.dump(du_lieu, f, ensure_ascii=False, indent=2)
         return True
@@ -3826,7 +4178,8 @@ def _luu_tien_trinh(thu_muc, du_lieu):
 def _doc_tien_trinh(thu_muc):
     """Doc tien-trinh.json trong thu muc (tra ve dict hoac None)."""
     try:
-        with open(os.path.join(thu_muc, TEN_FILE_TIEN_TRINH), "r",
+        with open(_duong_dan_dai_win(
+                os.path.join(thu_muc, TEN_FILE_TIEN_TRINH)), "r",
                   encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else None
@@ -3836,7 +4189,8 @@ def _doc_tien_trinh(thu_muc):
 
 def _xoa_tien_trinh(thu_muc):
     """Xoa file tien trinh (khi xuat xong 100%)."""
-    _xoa_file_quiet(os.path.join(thu_muc, TEN_FILE_TIEN_TRINH))
+    _xoa_file_quiet(_duong_dan_dai_win(
+        os.path.join(thu_muc, TEN_FILE_TIEN_TRINH)))
 
 
 def _thu_muc_co_ket_qua(thu_muc):
@@ -4205,10 +4559,10 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
         if not self.thu_muc_xuat:
             return None
         srt = self.e_srt.get().strip()
-        if not srt or not os.path.isfile(srt):
+        if not srt or not os.path.isfile(_duong_dan_dai_win(srt)):
             return None
         try:
-            st = os.stat(srt)
+            st = os.stat(_duong_dan_dai_win(srt))
         except OSError:
             return None
         # Cac thu muc ung vien: thu muc mac dinh + cac thu muc (1),
@@ -4406,6 +4760,11 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
                         self.tree_cau.see(iid)
                 elif muc[0] == "ket_qua":
                     self.lb_ket_qua.configure(text=muc[1])
+                elif muc[0] == "loi_hop_thoai":
+                    # (v7.7) Worker gap loi nghiem trong thi bao bang hop
+                    # thoai tren luong chinh (khong goi messagebox truc
+                    # tiep tu luong worker - khong an toan voi tkinter).
+                    messagebox.showerror(APP_TITLE, muc[1])
                 elif muc[0] == "nghe_xong":
                     # v1.3: nghe thu xong (tu nhien hoac bam Dung) - mo
                     # lai nut Nghe thu, tat nut Dung.
@@ -4476,8 +4835,15 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
             ver = getattr(edge_tts, "__version__", "?")
             import edge_tts.communicate as _comm
             may_chu = _ten_may_chu(_comm.WSS_URL)
-        except Exception:
-            ver, may_chu = "?", "?"
+        except Exception as e:
+            # (v7.7) Thieu thu vien edge-tts trong ban exe: bao ro
+            # ngay thay vi de doc thu loi mo ho o duoi.
+            self._log("LỖI: thiếu thư viện edge-tts trong bản exe (lỗi "
+                      "build: thiếu hidden import edge_tts) - %s" % e)
+            self._log("Cài lại bản mới hoặc chạy file .py trực tiếp "
+                      "(pip install edge-tts).")
+            self.hang_doi.put(("xong",))
+            return
         self._log("Kiểm tra giọng %s (%s)..." % (ts["giong_hien_thi"], voice))
         self._log("edge-tts %s; máy chủ giọng: %s" % (ver, may_chu))
         thu_muc = ts["thu_muc"]
@@ -4615,7 +4981,7 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
         if self.dang_chay:
             return
         srt = self.e_srt.get().strip()
-        if not srt or not os.path.isfile(srt):
+        if not srt or not os.path.isfile(_duong_dan_dai_win(srt)):
             messagebox.showwarning(STUDIO_TITLE, "Hãy chọn file SRT trước.")
             return
         # Neu danh sach cau chua nap (vd: go duong dan tay), nap ngay.
@@ -4701,7 +5067,7 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
         if self.dang_chay:
             return
         srt = self.e_srt.get().strip()
-        if not srt or not os.path.isfile(srt):
+        if not srt or not os.path.isfile(_duong_dan_dai_win(srt)):
             messagebox.showwarning(STUDIO_TITLE, "Hãy chọn file SRT trước.")
             return
         if not self._tree_ids:
@@ -4752,6 +5118,12 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
         self._dung_nghe.set()
         self._khoa_nut_khi_chay(cho_huy=True)
         self.hang_doi.put(("ket_qua", ""))
+        # (v7.7) Doi trang thai NGAY truoc khi mo luong worker: ban
+        # cu de "Chưa chạy." cho toi khi doc xong cau 1 nen CYAN
+        # tuong tool dung im; gio bam XUAT la thay "Đang khởi động..."
+        # lien, neu luong chet thi cung co log loi chu khong im.
+        self._tien_trinh(0, "Đang khởi động...")
+        self._log("Đang khởi động xuất MP3...")
         threading.Thread(target=self._chay,
                          args=(srt, ffmpeg, ts, thu_muc_ghi_de,
                                cau_da_xong_truoc, la_tiep_tuc,
@@ -4761,9 +5133,47 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
     def _chay(self, srt, ffmpeg, ts, thu_muc_ghi_de=None,
               cau_da_xong_truoc=None, la_tiep_tuc=False,
               toc_do_cau_truoc=None):
-        from pydub import AudioSegment
-        if ffmpeg:
-            AudioSegment.converter = ffmpeg
+        """Luong worker xuat MP3 — chi la lop boc an toan quanh
+        _chay_thuc. (v7.7) NGUYEN NHAN GOC LOI v7.5: _chay cu bat dau
+        bang `from pydub import AudioSegment` KHONG co try/except;
+        ban exe thieu pydub thi ImportError giet chet luong ngay tai
+        do, khong log, khong queue ("xong",) nen UI dung mai o
+        "Chưa chạy.", nut Huy cung vo dung. Tu nay moi exception
+        trong worker deu duoc log ro + mo khoa nut + hop thoai loi,
+        KHONG BAO GIO chet im nua."""
+        try:
+            self._chay_thuc(srt, ffmpeg, ts, thu_muc_ghi_de,
+                            cau_da_xong_truoc, la_tiep_tuc,
+                            toc_do_cau_truoc)
+        except Exception as e:
+            tb = traceback.format_exc()
+            thu_muc_log = (getattr(self, "thu_muc_ket_qua", None)
+                           or thu_muc_ghi_de
+                           or ts.get("thu_muc_goc") or ".")
+            try:
+                _ghi_log_loi_ffmpeg(thu_muc_log,
+                                    "LOI LUONG XUAT MP3 (chet dot ngot):\n"
+                                    + tb)
+            except Exception:
+                pass
+            loi_ngan = _tom_tat_loi(e)
+            self._log("LỖI XUẤT MP3: luồng worker dừng đột ngột: %s "
+                      "(chi tiết đã ghi vào ffmpeg-loi.log trong thư "
+                      "mục kết quả)" % loi_ngan)
+            self.hang_doi.put(("ket_qua", "LỖI XUẤT MP3: %s" % loi_ngan))
+            self.hang_doi.put(("loi_hop_thoai",
+                               "Xuất MP3 lồng tiếng bị lỗi:\n%s\n\n"
+                               "Chi tiết đã ghi vào file ffmpeg-loi.log "
+                               "trong thư mục kết quả — gửi file đó lại "
+                               "để kiểm tra." % loi_ngan))
+            self.hang_doi.put(("xong",))
+
+    def _chay_thuc(self, srt, ffmpeg, ts, thu_muc_ghi_de=None,
+                   cau_da_xong_truoc=None, la_tiep_tuc=False,
+                   toc_do_cau_truoc=None):
+        # (v7.7) KHONG con `from pydub import AudioSegment` o dau
+        # ham nay — do la dong giet chet luong o v7.5. Doc giong,
+        # do thoi luong, gop file deu dung edge-tts + ffmpeg/ffprobe.
         voice = ts["voice"]
         toc_do = ts["toc_do"]
         cao_do = ts["cao_do"]
@@ -4779,8 +5189,16 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
         thu_muc_rieng = os.path.join(thu_muc, "tung-cau")
         self.thu_muc_ket_qua = thu_muc
         self.file_gop = None
+        # (v7.7) Canh bao duong dan dai Windows: thu muc phim + ten
+        # file cua CYAN rat dai, gan/vuot 260 ky tu thi tao file co
+        # the loi — bao truoc de doi ten ngan lai neu can.
+        if sys.platform == "win32" and len(os.path.abspath(thu_muc)) > 240:
+            self._log("Cảnh báo: đường dẫn thư mục kết quả rất dài "
+                      "(%d ký tự), Windows giới hạn 260 ký tự — nếu "
+                      "tạo file lỗi thì đổi tên thư mục phim ngắn lại."
+                      % len(os.path.abspath(thu_muc)))
         try:
-            os.makedirs(thu_muc_rieng, exist_ok=True)
+            os.makedirs(_duong_dan_dai_win(thu_muc_rieng), exist_ok=True)
         except OSError as e:
             self._log("Lỗi tạo thư mục: %s" % e)
             self.hang_doi.put(("xong",))
@@ -4828,26 +5246,26 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
         toc_do_cau = dict(toc_do_cau_truoc or {})
         da_huy = False
         cau_dung = 0  # chi so cau dang doc luc bam Huy
-        # v1.3 - GHEP DAN: moi cau doc xong la ghep ngay vao file long
-        # tieng dang tao (dung moc thoi gian SRT), khong doi den cuoi
-        # moi gop 1 lan. Huy giua chung hay loi giua chung thi file
-        # gop van giu cac cau da xong; mo file ra nghe thu duoc ngay ca
-        # khi chua chay xong.
+        # (v7.7) Gop o CUOI bang ffmpeg concat (khong con ghep dan
+        # vao WAV tam): moi cau doc xong chi luu file MP3 rieng
+        # trong tung-cau; huy giua chung hay loi giua chung thi cac
+        # file cau da xong van con, bam Tiep tuc doc not roi gop.
         gop = None
         dich_gop = None
         if can_gop:
             dich_gop = os.path.join(thu_muc, ten_goc + "_long-tieng.mp3")
             gop = GopDan(
-                os.path.join(thu_muc, ten_goc + "_long-tieng-tam.wav"),
                 dich_gop,
                 tong_ms=max(c["ket_thuc_ms"] for c in cac_cau),
-                log_cb=self._log)
-            self._log("Gộp dần: mỗi câu đọc xong sẽ ghép ngay vào file "
-                      "lồng tiếng (đúng timestamp SRT). Vì API giọng "
-                      "Microsoft chỉ nhận 1 đoạn văn mỗi lần gọi nên "
-                      "tool phải đọc từng câu riêng rồi mới ghép lại "
-                      "thành 1 file duy nhất - không gọi 1 lần cho cả "
-                      "%d câu được." % tong)
+                log_cb=self._log, ffmpeg=ffmpeg,
+                thu_muc=thu_muc_rieng)
+            self._log("Gộp cuối bằng ffmpeg concat: mỗi câu đọc xong "
+                      "lưu file MP3 riêng trong tung-cau, xong hết mới "
+                      "gộp thành 1 file lồng tiếng (đúng timestamp "
+                      "SRT). Vì API giọng Microsoft chỉ nhận 1 đoạn "
+                      "văn mỗi lần gọi nên tool phải đọc từng câu "
+                      "riêng rồi mới ghép lại thành 1 file duy nhất - "
+                      "không gọi 1 lần cho cả %d câu được." % tong)
         # v1.3 - TIEP TUC: cac cau da xong o lan truoc thi danh dau Xong
         # va noi lai vao file gop (doc lai file MP3 tung cau da co,
         # khong goi lai API giong). Cau nao file bi hong thi doc lai.
@@ -4889,10 +5307,19 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
             self._log("Câu %d/%d (%.1fs): %s" % (
                 i, tong, (cau["ket_thuc_ms"] - cau["bat_dau_ms"]) / 1000.0,
                 cau["text"][:80]))
+            # (v7.7) Truyen co Huy + timeout giong: nut Huy dung duoc
+            # ngay ca khi dang cho giong, het 120s thi failover luot
+            # sau thay vi treo vo han o cau nay.
             ok, bo_xac_minh, loi = doc_cau_thanh_mp3(
                 cau["text"], voice, toc_do, cao_do, dich,
-                log_cb=self._log, ffmpeg=ffmpeg)
+                log_cb=self._log, ffmpeg=ffmpeg,
+                timeout_giay=THOI_GIAN_TOI_DA_DOC_MOT_DOAN_GIAY,
+                dung=self._yeu_cau_huy)
             if not ok:
+                if self._yeu_cau_huy.is_set():
+                    # Huy giua cau dang doc: khong ghi "LỖI câu" nua,
+                    # vong lap chinh se dung va bao "Đã hủy".
+                    return False
                 self._dat_trang_thai_cau(cau["chi_so"], "Lỗi: " + (loi or "?")[:60])
                 self._log("  -> LỖI câu %d: %s" % (cau["chi_so"], loi))
                 return False
@@ -4964,15 +5391,17 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
             for chi_so in sorted(loi_cau):
                 self._log("Đã bỏ qua câu %d (không có audio) - slot của "
                           "nó giữ khoảng lặng trong file gộp." % chi_so)
-        # v1.3 - HOAN TAT file gop dan: chuyen WAV tam -> MP3 1 lan.
-        # Chi ghi 1 dong loi ngan ra giao dien khi gap su co; log chi
-        # tiet ffmpeg chi ghi vao file ffmpeg-loi.log trong thu muc
-        # ket qua (khong hien tab log dai nhay lien tuc len man hinh).
+        # (v7.7) HOAN TAT file gop: gop cac file MP3 tung cau bang
+        # ffmpeg concat (dung moc gio SRT). Chi ghi 1 dong loi ngan
+        # ra giao dien khi gap su co; log chi tiet ffmpeg chi ghi
+        # vao file ffmpeg-loi.log trong thu muc ket qua (khong hien
+        # tab log dai nhay lien tuc len man hinh).
         tong_ms_gop = 0
         if can_gop and gop is not None and gop.so_cau > 0:
             self._log("Đang hoàn tất file lồng tiếng: %s" % dich_gop)
             try:
-                ok_gop, tong_ms_gop = gop.hoan_tat(ffmpeg)
+                ok_gop, tong_ms_gop = gop.hoan_tat(
+                    ffmpeg, dung=self._yeu_cau_huy)
                 if ok_gop:
                     self.file_gop = dich_gop
                     self._log("XONG file gộp: %s (dài %.1fs, %d câu bị "
@@ -4995,7 +5424,7 @@ class CuaSoDocPhuDe(tk.Frame):  # (v7.4) Frame trong Notebook, khong con Topleve
         # 100% thi xoa (khong con gi de tiep tuc).
         if 0 < so_xong < tong:
             try:
-                st = os.stat(srt)
+                st = os.stat(_duong_dan_dai_win(srt))
                 _luu_tien_trinh(thu_muc, {
                     "srt": srt,
                     "srt_kich_thuoc": st.st_size,

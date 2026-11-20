@@ -19,7 +19,7 @@ jobs:
       - name: Install PyInstaller
         run: pip install pyinstaller comtypes edge-tts pydub pillow pywebview onnxruntime-directml==1.24.4
       - name: Smoke test ONNX Runtime (DirectML)
-                      run: |
+        run: |
           python -c "import onnxruntime as ort; print('ORT', ort.__version__); print(ort.get_available_providers())"
 
       - name: Build EXE

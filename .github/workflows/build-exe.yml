@@ -19,7 +19,8 @@ jobs:
       - name: Install PyInstaller
         run: pip install pyinstaller comtypes edge-tts pydub pillow pywebview onnxruntime-directml==1.24.4
       - name: Smoke test ONNX Runtime (DirectML)
-              run: python -c "import onnxruntime as ort; print('ORT', ort.__version__); print(ort.get_available_providers())"
+                      run: |
+          python -c "import onnxruntime as ort; print('ORT', ort.__version__); print(ort.get_available_providers())"
 
       - name: Build EXE
         run: pyinstaller --onefile --windowed --name "Chipchipdownload" --icon chipchipdownload.ico --hidden-import=edge_tts --hidden-import=edge_tts.communicate --hidden-import=aiohttp --hidden-import=certifi --hidden-import=pydub --collect-all webview --collect-all onnxruntime Gop-Video-Bilibili-GUI.py

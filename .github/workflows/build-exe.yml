@@ -11,79 +11,65 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install PyInstaller
-        run: pip install pyinstaller comtypes edge-tts pydub pillow pywebview onnxruntime-directml==1.24.4
+        run: pip install pyinstaller comtypes edge-tts pydub pillow pywebview vieneu==3.8.5
+      - name: Install ONNX Runtime DirectML (must be after vieneu so DirectML wins)
+        run: pip install onnxruntime-directml==1.24.4
       - name: Smoke test ONNX Runtime (DirectML)
         run: |
           python -c "import onnxruntime as ort; print('ORT', ort.__version__); print(ort.get_available_providers())"
-
+          python -c "import vieneu; print('vieneu OK', vieneu.__version__)"
+          python -c "import onnxruntime as ort; assert 'DmlExecutionProvider' in ort.get_available_providers(), 'DmlExecutionProvider missing - DirectML did not win'; print('DmlExecutionProvider OK')"
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --name "Chipchipdownload" --icon chipchipdownload.ico --hidden-import=edge_tts --hidden-import=edge_tts.communicate --hidden-import=aiohttp --hidden-import=certifi --hidden-import=pydub --collect-all webview --collect-all onnxruntime --hidden-import postman2d --hidden-import PIL Gop-Video-Bilibili-GUI.py
-
+        run: pyinstaller --onefile --windowed --name "Chipchipdownload" --icon chipchipdownload.ico --hidden-import=edge_tts --hidden-import=comtypes --hidden-import=comtypes.stream --hidden-import=comtypes.client --hidden-import=comtypes.gen --hidden-import=pydub --hidden-import=PIL --hidden-import=postman2d --collect-all onnxruntime --collect-all vieneu --collect-all webview Gop-Video-Bilibili-GUI.py
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
           name: Chipchipdownload-exe
           path: dist/Chipchipdownload.exe
-
   installer:
     needs: build
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Download EXE artifact
         uses: actions/download-artifact@v4
         with:
           name: Chipchipdownload-exe
           path: dist
-
       - name: Install Inno Setup
         run: choco install innosetup -y
-
       - name: Build installer
         shell: powershell
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (Test-Path $iscc) { & $iscc installer.iss } else { ISCC.exe installer.iss }
-
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: Chipchipdownload-Setup
           path: installer-out/Chipchipdownload-Setup-*.exe
-
   release:
     needs: [build, installer]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-
       - name: Download EXE artifact
         uses: actions/download-artifact@v4
         with:
           name: Chipchipdownload-exe
-          path: release
-
+          path: dist
       - name: Download installer artifact
         uses: actions/download-artifact@v4
         with:
           name: Chipchipdownload-Setup
-          path: release
-
-      - name: Create GitHub Release
-        shell: powershell
+          path: installer-out
+      - name: Create release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          $setup = (Get-ChildItem release/Chipchipdownload-Setup-*.exe | Select-Object -First 1).FullName
-          gh release create $tag "release/Chipchipdownload.exe" $setup --title "Chipchipdownload $tag" --notes "Chipchipdownload $tag. Cai dat bang file Setup, hoac chay truc tiep file Chipchipdownload.exe. Nut Kiem tra cap nhat trong tool tu va exe tu Release nay (can token GitHub chi-doc repo private)."
+          gh release create ${{ github.ref_name }} dist/Chipchipdownload.exe installer-out/Chipchipdownload-Setup-*.exe --title "Chipchipdownload ${{ github.ref_name }}" --notes "Chipchipdownload ${{ github.ref_name }} - Tool gop video Bilibili (hinh + tieng) thanh 1 video."

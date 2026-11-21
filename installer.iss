@@ -5,10 +5,12 @@
 ; Build bang: ISCC.exe installer.iss  (can file dist\Chipchipdownload.exe
 ; va chipchipdownload.ico o cung thu muc repo).
 
+
 #define MyAppName "Chipchipdownload"
-#define MyAppVersion "7.24"
+#define MyAppVersion "7.25"
  #define MyAppPublisher "Gà Con cho CYAN"
 #define MyAppExeName "Chipchipdownload.exe"
+
 
 [Setup]
 AppId={{A7C3D9E1-4B2F-4A8C-9E5D-1F3A6B8C0D42}
@@ -32,13 +34,16 @@ VersionInfoVersion={#MyAppVersion}
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "chipchipdownload.ico"; DestDir: "{app}"; Flags: ignoreversion
 
+
 [Icons]
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\chipchipdownload.ico"
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\chipchipdownload.ico"
 Name: "{group}\Gỡ cài đặt {#MyAppName}"; Filename: "{uninstallexe}"
 
+
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Mở {#MyAppName} ngay"; Flags: nowait postinstall skipifsilent
+
 
 ; Go cai dat: xoa luon cac file thu vien + du lieu tool da tu tai/tao ra khi
 ; chay (nam cung thu muc cai dat). Chi xoa sau khi go cai dat xong.

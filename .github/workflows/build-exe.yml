@@ -22,9 +22,10 @@ jobs:
         run: |
           python -c "import onnxruntime as ort; print('ORT', ort.__version__); print(ort.get_available_providers())"
           python -c "import vieneu; print('vieneu OK', vieneu.__version__)"
+          python -c "from sea_g2p import G2P; G2P()"
           python -c "import onnxruntime as ort; assert 'DmlExecutionProvider' in ort.get_available_providers(), 'DmlExecutionProvider missing - DirectML did not win'; print('DmlExecutionProvider OK')"
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --name "Chipchipdownload" --icon chipchipdownload.ico --hidden-import=edge_tts --hidden-import=comtypes --hidden-import=comtypes.stream --hidden-import=comtypes.client --hidden-import=comtypes.gen --hidden-import=pydub --hidden-import=PIL --hidden-import=postman2d --collect-all onnxruntime --collect-all vieneu --collect-all webview Gop-Video-Bilibili-GUI.py
+        run: pyinstaller --onefile --windowed --name "Chipchipdownload" --icon chipchipdownload.ico --hidden-import=edge_tts --hidden-import=comtypes --hidden-import=comtypes.stream --hidden-import=comtypes.client --hidden-import=comtypes.gen --hidden-import=pydub --hidden-import=PIL --hidden-import=postman2d --collect-all onnxruntime --collect-all vieneu --collect-all webview  --collect-all sea_g2p Gop-Video-Bilibili-GUI.py
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:

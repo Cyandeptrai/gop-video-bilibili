@@ -24,7 +24,7 @@ OutputDir=installer-out
 OutputBaseFilename=Chipchipdownload-Setup-v{#MyAppVersion}
 SetupIconFile=chipchipdownload.ico
 Compression=lzma
-SolidCompressios
+SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}

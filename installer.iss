@@ -7,7 +7,7 @@
 
 
 #define MyAppName "Chipchipdownload"
-#define MyAppVersion "7.27"
+#define MyAppVersion "7.28"
  #define MyAppPublisher "Gà Con cho CYAN"
 #define MyAppExeName "Chipchipdownload.exe"
 

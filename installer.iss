@@ -7,7 +7,7 @@
 
 
 #define MyAppName "Chipchipdownload"
-#define MyAppVersion "7.28"
+#define MyAppVersion "7.29"
  #define MyAppPublisher "Gà Con cho CYAN"
 #define MyAppExeName "Chipchipdownload.exe"
 
@@ -24,7 +24,7 @@ OutputDir=installer-out
 OutputBaseFilename=Chipchipdownload-Setup-v{#MyAppVersion}
 SetupIconFile=chipchipdownload.ico
 Compression=lzma
-SolidCompression=yes
+SolidCompressios
 WizardStyle=modern
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
